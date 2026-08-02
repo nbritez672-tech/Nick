@@ -7160,322 +7160,11 @@ function YinYang:CreateWindow(title_text, startTheme)
     CR_FooterText:SetAttribute("TextSpanish", "© 2026 Yin Yang | Script Hub  •  Todos los derechos reservados.")
     CR_FooterText:SetAttribute("TextEnglish", "© 2026 Yin Yang | Script Hub  •  All rights reserved.")
 
-    return Window
 
-end
-
---// ============================================================
---// LIBRERÍA GLOBAL - LISTA PARA USAR
---// ============================================================
---// YinYang es accesible globalmente como _G.YinYang
---// Uso desde otros scripts:
---//
---// local YinYang = _G.YinYang
---// local UI = YinYang:CreateWindow("Mi UI", "Dark")
---// local Tab = UI:CreateTab("Inicio")
---// Tab:CreateWelcomeCard()
---// Tab:CreateServerInfoCard()
---// Tab:CreateButton("Mi Botón", function() print("Click!") end)
---// Tab:CreateToggle("Toggle", false, function(state) print(state) end)
---// Tab:CreateDropdown("Category", {"Op1", "Op2"}, "Op1", function(val) print(val) end)
---// Tab:CreateMultiDropdown("Blacklist", {"A", "B", "C"}, {}, function(tbl) print(table.concat(tbl, ",")) end)
---//
---// ============================================================
-
-print(" Yin Yang v24 CON TEMA CAT V1  - ¡Librería cargada y lista para usar!")
-
---// ============================================================
---// DEMO VISUAL - MUESTRA TODAS LAS CARACTERÍSTICAS
---// ============================================================
---// INSTRUCCIONES:
---// - Para ACTIVAR la demo: Cambia "DEMO_ACTIVO" a true
---// - Para DESACTIVAR: Cambia "DEMO_ACTIVO" a false
---// ============================================================
-
-local DEMO_ACTIVO = false  -- Demo desactivada para usar la librería desde otro script
-
-if DEMO_ACTIVO then
-    task.wait(0.5)
-    
-    print("\n" .. string.rep("=", 60))
-    print("INICIANDO DEMO VISUAL DE YIN YANG v24 - LIBRERÍA PROFESIONAL")
-    print(string.rep("=", 60))
-    
-    --// 💾 v26: CARGAR CONFIGURACIÓN GUARDADA AL INICIAR
-    local ConfigCargada = LoadConfig()
-    local TemaInicial = "Dark"
-    if ConfigCargada and ConfigCargada.theme then
-        TemaInicial = ConfigCargada.theme
-    end
-    if ConfigCargada and ConfigCargada.lang then
-        LanguageSystem.CurrentLanguage = ConfigCargada.lang
-    end
-
-    local DemoUI = _G.YinYang:CreateWindow("Yin Yang - DEMO v26", TemaInicial)
-    
-    --//  APLICAR TEMA GUARDADO - Re-pinta TODOS los colores, no solo la variable
-    DemoUI:SetTheme(TemaInicial)
-    
-    -- =========================================================
-    -- TAB INICIO (PROTEGIDA Y PERMANENTE)
-    -- =========================================================
-    local TabFeatures = DemoUI:CreateTab("Features")
-    
-    TabFeatures:CreateLabel("Toggles", 14)
-    TabFeatures:CreateDivider()
-
-    --// Helper local: crea un toggle premium con botón ↗ (flotar) y 📌 (fijar) a la derecha.
-    --// El botón ↗ lanza una pill flotante arrastrable; 📌 alterna si se puede mover o no.
-    local function createToggleWithFloat(tab, labelES, labelEN, default, callback)
-        local tog = tab:CreateToggle(labelES, labelEN, default, callback)
-
-        --// Referencias directas — sin búsquedas por tamaño ni por orden
-        local Holder = tog.Holder
-        if not Holder then return tog end
-
-        --// ── BOTÓN FLOTAR (↗ / ←) ────────────────────────────────────────────
-        local FloatBtn = mk("TextButton", {
-            Parent = Holder,
-            Size = UDim2.new(0, 26, 0, 26),
-            Position = UDim2.new(1, -122, 0.5, -13),
-            BackgroundColor3 = Theme.Accent,
-            Text = "↗",
-            TextColor3 = Color3.fromRGB(0, 0, 0),
-            Font = Enum.Font.GothamBold,
-            TextSize = 13,
-            ZIndex = 14
-        })
-        corner(FloatBtn, 6)
-
-        --// ── BOTÓN FIJAR (candado) — ImageButton con asset profesional ──────────
-        local PinBtn = mk("ImageButton", {
-            Parent = Holder,
-            Size = UDim2.new(0, 26, 0, 26),
-            Position = UDim2.new(1, -92, 0.5, -13),
-            BackgroundColor3 = Theme.Secondary,
-            Image = "rbxassetid://83537941312438",   -- candado abierto (desbloqueado)
-            ImageColor3 = Theme.Text,
-            ScaleType = Enum.ScaleType.Stretch,
-            ZIndex = 14
-        })
-        corner(PinBtn, 6)
-        stroke(PinBtn, Theme.Stroke, 1, 0.5)
-
-        --// Mover el switch real (referencia directa) para que no choque con los botones
-        if tog.Switch then
-            tog.Switch.Position = UDim2.new(1, -58, 0.5, -14)
-        end
-        --// Reducir el Click real (referencia directa) para que cubra texto+switch
-        --// pero no tape FloatBtn/PinBtn (que terminan en 1,-66)
-        if tog.Click then
-            tog.Click.Size = UDim2.new(1, -66, 1, 0)
-        end
-
-        --// ── ESTADO FLOTANTE ───────────────────────────────────────────────────
-        local isFloating = false
-        local isLocked   = false
-        local FloatPill  = nil
-        local FloatConn1, FloatConn2, FloatConn3
-
-        local function destroyPill()
-            if FloatConn1 then FloatConn1:Disconnect() end
-            if FloatConn2 then FloatConn2:Disconnect() end
-            if FloatConn3 then FloatConn3:Disconnect() end
-            FloatConn1, FloatConn2, FloatConn3 = nil, nil, nil
-            if FloatPill and FloatPill.Parent then FloatPill:Destroy() end
-            FloatPill = nil
-        end
-
-        local function spawnPill(labelText)
-            destroyPill()
-
-            --// Pill principal
-            FloatPill = mk("Frame", {
-                Parent = DemoUI.ScreenGui,
-                Size = UDim2.fromOffset(180, 36),
-                Position = UDim2.new(0.5, -90, 0.5, -18),
-                BackgroundColor3 = Theme.Secondary,
-                BackgroundTransparency = 0.28,
-                BorderSizePixel = 0,
-                ZIndex = 50
-            })
-            corner(FloatPill, 999)
-            stroke(FloatPill, Theme.Accent, 2, 0.15)
-            buildAnimatedBorder(FloatPill, Theme.Accent, UDim.new(1, 0), true)
-
-            --// Gradiente glassy
-            mk("UIGradient", {
-                Color = ColorSequence.new({
-                    ColorSequenceKeypoint.new(0,   Color3.fromRGB(180, 185, 200)),
-                    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(240, 243, 250)),
-                    ColorSequenceKeypoint.new(1,   Color3.fromRGB(180, 185, 200)),
-                }),
-                Transparency = NumberSequence.new({
-                    NumberSequenceKeypoint.new(0,   0.45),
-                    NumberSequenceKeypoint.new(0.5, 0.12),
-                    NumberSequenceKeypoint.new(1,   0.45),
-                }),
-                Rotation = 90,
-            }, FloatPill)
-
-            --// Etiqueta
-            mk("TextLabel", {
-                Parent = FloatPill,
-                Size = UDim2.new(1, -12, 1, 0),
-                Position = UDim2.new(0, 6, 0, 0),
-                BackgroundTransparency = 1,
-                Text = labelText,
-                TextColor3 = Theme.Text,
-                Font = Enum.Font.GothamBlack,
-                TextSize = 19,
-                TextXAlignment = Enum.TextXAlignment.Center,
-                TextYAlignment = Enum.TextYAlignment.Center,
-                ZIndex = 51
-            })
-
-            --// Área clickeable (toggle estado desde la pill)
-            local PillClick = mk("TextButton", {
-                Parent = FloatPill,
-                Size = UDim2.new(1, 0, 1, 0),
-                BackgroundTransparency = 1,
-                Text = "",
-                ZIndex = 52
-            })
-
-            PillClick.MouseButton1Click:Connect(function()
-                if dragMoved then return end
-                tog.SetValue(not tog.GetValue())
-                playSound(Sounds.Click, 0.5)
-                pcall(callback, tog.GetValue())
-                --// Feedback visual en pill
-                TweenService:Create(FloatPill,
-                    TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                    {BackgroundTransparency = tog.GetValue() and 0.10 or 0.28}):Play()
-            end)
-
-            --// ── DRAG ──────────────────────────────────────────────────────────
-            local dragging = false
-            local dragMoved = false
-            local dragStart, startPos
-
-            FloatConn1 = PillClick.InputBegan:Connect(function(input)
-                if (input.UserInputType == Enum.UserInputType.MouseButton1
-                    or input.UserInputType == Enum.UserInputType.Touch) and not isLocked then
-                    dragging  = false
-                    dragMoved = false
-                    dragStart = input.Position
-                    startPos  = FloatPill.Position
-                end
-            end)
-
-            FloatConn2 = UserInputService.InputChanged:Connect(function(input)
-                if dragStart and not isLocked
-                    and (input.UserInputType == Enum.UserInputType.MouseMovement
-                      or input.UserInputType == Enum.UserInputType.Touch) then
-                    local delta = input.Position - dragStart
-                    if delta.Magnitude > 4 then
-                        dragging  = true
-                        dragMoved = true
-                        FloatPill.Position = UDim2.new(
-                            startPos.X.Scale, startPos.X.Offset + delta.X,
-                            startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-                    end
-                end
-            end)
-
-            FloatConn3 = UserInputService.InputEnded:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1
-                    or input.UserInputType == Enum.UserInputType.Touch then
-                    task.defer(function() dragging = false end)
-                    dragStart = nil
-                end
-            end)
-        end
-
-        --// ── LÓGICA BOTÓN FLOTAR ───────────────────────────────────────────────
-        FloatBtn.MouseButton1Click:Connect(function()
-            playSound(Sounds.Click, 0.6)
-            if not isFloating then
-                isFloating = true
-                spawnPill(labelES)
-                FloatBtn.Text = "x"
-            else
-                isFloating = false
-                destroyPill()
-                FloatBtn.Text = "↗"
-                --// Volver al candado abierto y quitar fijado
-                PinBtn.Image = "rbxassetid://83537941312438"
-                isLocked = false
-            end
-        end)
-
-        --// ── LÓGICA BOTÓN FIJAR ────────────────────────────────────────────────
-        PinBtn.MouseButton1Click:Connect(function()
-            if not isFloating then return end
-            playSound(Sounds.Click, 0.5)
-            isLocked = not isLocked
-            --// Candado cerrado = fijado, candado abierto = libre
-            PinBtn.Image = isLocked
-                and "rbxassetid://91959170037380"   -- candado cerrado
-                or  "rbxassetid://83537941312438"   -- candado abierto
-        end)
-
-        return tog
-    end
-
-    --// Toggles de demo usando el helper
-    createToggleWithFloat(TabFeatures, "Aimbot", "Aimbot", false, function(state)
-        print("Aimbot: " .. (state and "ON" or "OFF"))
-    end)
-
-    createToggleWithFloat(TabFeatures, "ESP", "ESP", false, function(state)
-        print("ESP: " .. (state and "ON" or "OFF"))
-    end)
-
-    createToggleWithFloat(TabFeatures, "GodMode", "GodMode", false, function(state)
-        print("GodMode: " .. (state and "ON" or "OFF"))
-    end)
-
-    --// ========================================================
-    --// SECCIÓN: SLIDERS PREMIUM v2.0 (TESTING & SHOWCASE)
-    --// ========================================================
-    TabFeatures:CreateDivider()
-    TabFeatures:CreateLabel("Sliders Premium v2.0 🚀", 14)
-    TabFeatures:CreateDivider()
-
-    --// SLIDER 1: TELEPORT SPEED
-    local SliderTeleportSpeed = TabFeatures:CreateSlider("Teleport Speed", 1.0, 100.0, 23.1, function(val)
-        print("🚀 Teleport Speed: " .. string.format("%.2f", val))
-    end)
-
-    --// SLIDER 2: JUMP HEIGHT
-    local SliderJumpHeight = TabFeatures:CreateSlider("Jump Height", 10.0, 300.0, 139.24, function(val)
-        print("⬆️  Jump Height: " .. string.format("%.2f", val))
-    end)
-
-    --// SLIDER 3: SPEED MULTIPLIER
-    local SliderSpeed = TabFeatures:CreateSlider("Speed Multiplier", 0.5, 3.0, 1.5, function(val)
-        print("💨 Speed: " .. string.format("%.2f", val) .. "x")
-    end)
-
-    --// SLIDER 4: FOV (Field of View)
-    local SliderFOV = TabFeatures:CreateSlider("FOV", 30, 120, 70, function(val)
-        print("👁️  FOV: " .. string.format("%.0f", val))
-    end)
-
-    --// SLIDER 5: VOLUME
-    local SliderVolume = TabFeatures:CreateSlider("Volume", 0, 1.0, 0.5, function(val)
-        print("🔊 Volume: " .. string.format("%.1f%%", val * 100))
-    end)
-
-
-    
-    --// ========================================================
-    --// PESTAÑA: SPOTIFY (CATÁLOGO REMOTO + CACHÉ LOCAL)
-    --// Source of truth:
-    --// https://raw.githubusercontent.com/Yinyangzx/Yin-music/refs/heads/main/YinYang_Spotify_Catalog.lua
-    --// ========================================================
-    local SpotifyTab = DemoUI:CreateTab("Spotify", "Spotify", "rbxassetid://133998910541098")
+    --// ═════════════════════════════════════════════════════════════════════
+    --// TAB AUTOMÁTICO PERMANENTE: SPOTIFY (obligatorio en toda ventana)
+    --// ═════════════════════════════════════════════════════════════════════
+    local SpotifyTab = Window:CreateTab("Spotify", "Spotify", "rbxassetid://133998910541098")
     local SpotifyPage = SpotifyTab.Page
 
     SpotifyPage.BackgroundColor3 = Theme.Background
@@ -9286,6 +8975,321 @@ clearSongRows = function()
     MoreBtn.MouseButton1Click:Connect(function()
         PlayerMeta.Text = "Menú de opciones abierto"
     end)
+    return Window
+
+end
+
+--// ============================================================
+--// LIBRERÍA GLOBAL - LISTA PARA USAR
+--// ============================================================
+--// YinYang es accesible globalmente como _G.YinYang
+--// Uso desde otros scripts:
+--//
+--// local YinYang = _G.YinYang
+--// local UI = YinYang:CreateWindow("Mi UI", "Dark")
+--// local Tab = UI:CreateTab("Inicio")
+--// Tab:CreateWelcomeCard()
+--// Tab:CreateServerInfoCard()
+--// Tab:CreateButton("Mi Botón", function() print("Click!") end)
+--// Tab:CreateToggle("Toggle", false, function(state) print(state) end)
+--// Tab:CreateDropdown("Category", {"Op1", "Op2"}, "Op1", function(val) print(val) end)
+--// Tab:CreateMultiDropdown("Blacklist", {"A", "B", "C"}, {}, function(tbl) print(table.concat(tbl, ",")) end)
+--//
+--// ============================================================
+
+print(" Yin Yang v24 CON TEMA CAT V1  - ¡Librería cargada y lista para usar!")
+
+--// ============================================================
+--// DEMO VISUAL - MUESTRA TODAS LAS CARACTERÍSTICAS
+--// ============================================================
+--// INSTRUCCIONES:
+--// - Para ACTIVAR la demo: Cambia "DEMO_ACTIVO" a true
+--// - Para DESACTIVAR: Cambia "DEMO_ACTIVO" a false
+--// ============================================================
+
+local DEMO_ACTIVO = false  -- Demo desactivada para usar la librería desde otro script
+
+if DEMO_ACTIVO then
+    task.wait(0.5)
+    
+    print("\n" .. string.rep("=", 60))
+    print("INICIANDO DEMO VISUAL DE YIN YANG v24 - LIBRERÍA PROFESIONAL")
+    print(string.rep("=", 60))
+    
+    --// 💾 v26: CARGAR CONFIGURACIÓN GUARDADA AL INICIAR
+    local ConfigCargada = LoadConfig()
+    local TemaInicial = "Dark"
+    if ConfigCargada and ConfigCargada.theme then
+        TemaInicial = ConfigCargada.theme
+    end
+    if ConfigCargada and ConfigCargada.lang then
+        LanguageSystem.CurrentLanguage = ConfigCargada.lang
+    end
+
+    local DemoUI = _G.YinYang:CreateWindow("Yin Yang - DEMO v26", TemaInicial)
+    
+    --//  APLICAR TEMA GUARDADO - Re-pinta TODOS los colores, no solo la variable
+    DemoUI:SetTheme(TemaInicial)
+    
+    -- =========================================================
+    -- TAB INICIO (PROTEGIDA Y PERMANENTE)
+    -- =========================================================
+    local TabFeatures = DemoUI:CreateTab("Features")
+    
+    TabFeatures:CreateLabel("Toggles", 14)
+    TabFeatures:CreateDivider()
+
+    --// Helper local: crea un toggle premium con botón ↗ (flotar) y 📌 (fijar) a la derecha.
+    --// El botón ↗ lanza una pill flotante arrastrable; 📌 alterna si se puede mover o no.
+    local function createToggleWithFloat(tab, labelES, labelEN, default, callback)
+        local tog = tab:CreateToggle(labelES, labelEN, default, callback)
+
+        --// Referencias directas — sin búsquedas por tamaño ni por orden
+        local Holder = tog.Holder
+        if not Holder then return tog end
+
+        --// ── BOTÓN FLOTAR (↗ / ←) ────────────────────────────────────────────
+        local FloatBtn = mk("TextButton", {
+            Parent = Holder,
+            Size = UDim2.new(0, 26, 0, 26),
+            Position = UDim2.new(1, -122, 0.5, -13),
+            BackgroundColor3 = Theme.Accent,
+            Text = "↗",
+            TextColor3 = Color3.fromRGB(0, 0, 0),
+            Font = Enum.Font.GothamBold,
+            TextSize = 13,
+            ZIndex = 14
+        })
+        corner(FloatBtn, 6)
+
+        --// ── BOTÓN FIJAR (candado) — ImageButton con asset profesional ──────────
+        local PinBtn = mk("ImageButton", {
+            Parent = Holder,
+            Size = UDim2.new(0, 26, 0, 26),
+            Position = UDim2.new(1, -92, 0.5, -13),
+            BackgroundColor3 = Theme.Secondary,
+            Image = "rbxassetid://83537941312438",   -- candado abierto (desbloqueado)
+            ImageColor3 = Theme.Text,
+            ScaleType = Enum.ScaleType.Stretch,
+            ZIndex = 14
+        })
+        corner(PinBtn, 6)
+        stroke(PinBtn, Theme.Stroke, 1, 0.5)
+
+        --// Mover el switch real (referencia directa) para que no choque con los botones
+        if tog.Switch then
+            tog.Switch.Position = UDim2.new(1, -58, 0.5, -14)
+        end
+        --// Reducir el Click real (referencia directa) para que cubra texto+switch
+        --// pero no tape FloatBtn/PinBtn (que terminan en 1,-66)
+        if tog.Click then
+            tog.Click.Size = UDim2.new(1, -66, 1, 0)
+        end
+
+        --// ── ESTADO FLOTANTE ───────────────────────────────────────────────────
+        local isFloating = false
+        local isLocked   = false
+        local FloatPill  = nil
+        local FloatConn1, FloatConn2, FloatConn3
+
+        local function destroyPill()
+            if FloatConn1 then FloatConn1:Disconnect() end
+            if FloatConn2 then FloatConn2:Disconnect() end
+            if FloatConn3 then FloatConn3:Disconnect() end
+            FloatConn1, FloatConn2, FloatConn3 = nil, nil, nil
+            if FloatPill and FloatPill.Parent then FloatPill:Destroy() end
+            FloatPill = nil
+        end
+
+        local function spawnPill(labelText)
+            destroyPill()
+
+            --// Pill principal
+            FloatPill = mk("Frame", {
+                Parent = DemoUI.ScreenGui,
+                Size = UDim2.fromOffset(180, 36),
+                Position = UDim2.new(0.5, -90, 0.5, -18),
+                BackgroundColor3 = Theme.Secondary,
+                BackgroundTransparency = 0.28,
+                BorderSizePixel = 0,
+                ZIndex = 50
+            })
+            corner(FloatPill, 999)
+            stroke(FloatPill, Theme.Accent, 2, 0.15)
+            buildAnimatedBorder(FloatPill, Theme.Accent, UDim.new(1, 0), true)
+
+            --// Gradiente glassy
+            mk("UIGradient", {
+                Color = ColorSequence.new({
+                    ColorSequenceKeypoint.new(0,   Color3.fromRGB(180, 185, 200)),
+                    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(240, 243, 250)),
+                    ColorSequenceKeypoint.new(1,   Color3.fromRGB(180, 185, 200)),
+                }),
+                Transparency = NumberSequence.new({
+                    NumberSequenceKeypoint.new(0,   0.45),
+                    NumberSequenceKeypoint.new(0.5, 0.12),
+                    NumberSequenceKeypoint.new(1,   0.45),
+                }),
+                Rotation = 90,
+            }, FloatPill)
+
+            --// Etiqueta
+            mk("TextLabel", {
+                Parent = FloatPill,
+                Size = UDim2.new(1, -12, 1, 0),
+                Position = UDim2.new(0, 6, 0, 0),
+                BackgroundTransparency = 1,
+                Text = labelText,
+                TextColor3 = Theme.Text,
+                Font = Enum.Font.GothamBlack,
+                TextSize = 19,
+                TextXAlignment = Enum.TextXAlignment.Center,
+                TextYAlignment = Enum.TextYAlignment.Center,
+                ZIndex = 51
+            })
+
+            --// Área clickeable (toggle estado desde la pill)
+            local PillClick = mk("TextButton", {
+                Parent = FloatPill,
+                Size = UDim2.new(1, 0, 1, 0),
+                BackgroundTransparency = 1,
+                Text = "",
+                ZIndex = 52
+            })
+
+            PillClick.MouseButton1Click:Connect(function()
+                if dragMoved then return end
+                tog.SetValue(not tog.GetValue())
+                playSound(Sounds.Click, 0.5)
+                pcall(callback, tog.GetValue())
+                --// Feedback visual en pill
+                TweenService:Create(FloatPill,
+                    TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                    {BackgroundTransparency = tog.GetValue() and 0.10 or 0.28}):Play()
+            end)
+
+            --// ── DRAG ──────────────────────────────────────────────────────────
+            local dragging = false
+            local dragMoved = false
+            local dragStart, startPos
+
+            FloatConn1 = PillClick.InputBegan:Connect(function(input)
+                if (input.UserInputType == Enum.UserInputType.MouseButton1
+                    or input.UserInputType == Enum.UserInputType.Touch) and not isLocked then
+                    dragging  = false
+                    dragMoved = false
+                    dragStart = input.Position
+                    startPos  = FloatPill.Position
+                end
+            end)
+
+            FloatConn2 = UserInputService.InputChanged:Connect(function(input)
+                if dragStart and not isLocked
+                    and (input.UserInputType == Enum.UserInputType.MouseMovement
+                      or input.UserInputType == Enum.UserInputType.Touch) then
+                    local delta = input.Position - dragStart
+                    if delta.Magnitude > 4 then
+                        dragging  = true
+                        dragMoved = true
+                        FloatPill.Position = UDim2.new(
+                            startPos.X.Scale, startPos.X.Offset + delta.X,
+                            startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+                    end
+                end
+            end)
+
+            FloatConn3 = UserInputService.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1
+                    or input.UserInputType == Enum.UserInputType.Touch then
+                    task.defer(function() dragging = false end)
+                    dragStart = nil
+                end
+            end)
+        end
+
+        --// ── LÓGICA BOTÓN FLOTAR ───────────────────────────────────────────────
+        FloatBtn.MouseButton1Click:Connect(function()
+            playSound(Sounds.Click, 0.6)
+            if not isFloating then
+                isFloating = true
+                spawnPill(labelES)
+                FloatBtn.Text = "x"
+            else
+                isFloating = false
+                destroyPill()
+                FloatBtn.Text = "↗"
+                --// Volver al candado abierto y quitar fijado
+                PinBtn.Image = "rbxassetid://83537941312438"
+                isLocked = false
+            end
+        end)
+
+        --// ── LÓGICA BOTÓN FIJAR ────────────────────────────────────────────────
+        PinBtn.MouseButton1Click:Connect(function()
+            if not isFloating then return end
+            playSound(Sounds.Click, 0.5)
+            isLocked = not isLocked
+            --// Candado cerrado = fijado, candado abierto = libre
+            PinBtn.Image = isLocked
+                and "rbxassetid://91959170037380"   -- candado cerrado
+                or  "rbxassetid://83537941312438"   -- candado abierto
+        end)
+
+        return tog
+    end
+
+    --// Toggles de demo usando el helper
+    createToggleWithFloat(TabFeatures, "Aimbot", "Aimbot", false, function(state)
+        print("Aimbot: " .. (state and "ON" or "OFF"))
+    end)
+
+    createToggleWithFloat(TabFeatures, "ESP", "ESP", false, function(state)
+        print("ESP: " .. (state and "ON" or "OFF"))
+    end)
+
+    createToggleWithFloat(TabFeatures, "GodMode", "GodMode", false, function(state)
+        print("GodMode: " .. (state and "ON" or "OFF"))
+    end)
+
+    --// ========================================================
+    --// SECCIÓN: SLIDERS PREMIUM v2.0 (TESTING & SHOWCASE)
+    --// ========================================================
+    TabFeatures:CreateDivider()
+    TabFeatures:CreateLabel("Sliders Premium v2.0 🚀", 14)
+    TabFeatures:CreateDivider()
+
+    --// SLIDER 1: TELEPORT SPEED
+    local SliderTeleportSpeed = TabFeatures:CreateSlider("Teleport Speed", 1.0, 100.0, 23.1, function(val)
+        print("🚀 Teleport Speed: " .. string.format("%.2f", val))
+    end)
+
+    --// SLIDER 2: JUMP HEIGHT
+    local SliderJumpHeight = TabFeatures:CreateSlider("Jump Height", 10.0, 300.0, 139.24, function(val)
+        print("⬆️  Jump Height: " .. string.format("%.2f", val))
+    end)
+
+    --// SLIDER 3: SPEED MULTIPLIER
+    local SliderSpeed = TabFeatures:CreateSlider("Speed Multiplier", 0.5, 3.0, 1.5, function(val)
+        print("💨 Speed: " .. string.format("%.2f", val) .. "x")
+    end)
+
+    --// SLIDER 4: FOV (Field of View)
+    local SliderFOV = TabFeatures:CreateSlider("FOV", 30, 120, 70, function(val)
+        print("👁️  FOV: " .. string.format("%.0f", val))
+    end)
+
+    --// SLIDER 5: VOLUME
+    local SliderVolume = TabFeatures:CreateSlider("Volume", 0, 1.0, 0.5, function(val)
+        print("🔊 Volume: " .. string.format("%.1f%%", val * 100))
+    end)
+
+
+    
+    --// ========================================================
+    --// PESTAÑA: SPOTIFY (CATÁLOGO REMOTO + CACHÉ LOCAL)
+    --// Source of truth:
+    --// https://raw.githubusercontent.com/Yinyangzx/Yin-music/refs/heads/main/YinYang_Spotify_Catalog.lua
+    --// ========================================================
     print("\n DEMO v24 INICIADA")
     print("TABS: Inicio (Protegida) | Temas (16 colores sin duplicados) | Features | Dropdowns | Efectos")
     print(" MEJORAS: Sin duplicados, Pestañas permanentes, Efectos de texto mejorados")
@@ -9313,7 +9317,6 @@ else
     print("Yin Yang v24 - DEMO DESACTIVADA (DEMO_ACTIVO = false)")
     print("Solo la librería está cargada y lista para usar")
 end
-
 --// ============================================================
 --// FIN DE LA DEMO
 --// ============================================================
