@@ -2555,40 +2555,21 @@ function YinYang:CreateWindow(title_text, startTheme)
             local state = default or false
             local isFloating = false
             local isLocked = false
-            
+
             --// ═════════════════════════════════════════════════════════════════════════
-            --// PARTE 1: ELEMENTO EN LA PESTAÑA (PEQUEÑO)
+            --// PARTE 1: ELEMENTO EN LA PESTAÑA — usa CreateToggle para diseño nuevo
             --// ═════════════════════════════════════════════════════════════════════════
-            
-            local Holder = mk("Frame", {
-                Parent = TabPage,
-                Size = UDim2.new(1, 0, 0, 30),
-                BackgroundColor3 = Theme.Secondary,
-                ZIndex = 9
-            })
-            Holder:SetAttribute("ThemeRole", "Secondary")
-            corner(Holder, 6)
-            stroke(Holder, Theme.Stroke, 1, 0.6)
-            
-            --// Texto
-            local HolderLabel = mk("TextLabel", {
-                Parent = Holder,
-                Size = UDim2.new(1, -100, 1, 0),
-                Position = UDim2.new(0, 12, 0, 0),
-                BackgroundTransparency = 1,
-                Text = displayText,
-                TextColor3 = Theme.Text,
-                Font = Enum.Font.GothamBold,
-                TextSize = 13,
-                TextXAlignment = Enum.TextXAlignment.Left,
-                TextTruncate = Enum.TextTruncate.AtEnd,
-                ZIndex = 10
-            })
-            HolderLabel:SetAttribute("ThemeTextRole", "Text")
-            HolderLabel:SetAttribute("TextSpanish", textSpanish)
-            HolderLabel:SetAttribute("TextEnglish", textEnglish)
-            
-            --// Botón Desprender — ↗ / x
+
+            local tog = self:CreateToggle(textSpanish, textEnglish, state, function(newState)
+                state = newState
+                pcall(cb, state)
+            end)
+
+            local Holder     = tog.Holder
+            local HolderSwitch = tog.Switch
+            local HolderClick  = tog.Click
+
+            --// Botón Desprender — ↗ encima del toggle existente
             local DetachBtn = mk("TextButton", {
                 Parent = Holder,
                 Size = UDim2.new(0, 26, 0, 26),
@@ -2598,7 +2579,7 @@ function YinYang:CreateWindow(title_text, startTheme)
                 TextColor3 = Color3.fromRGB(0, 0, 0),
                 Font = Enum.Font.GothamBold,
                 TextSize = 13,
-                ZIndex = 13
+                ZIndex = 15
             })
             corner(DetachBtn, 6)
 
@@ -2611,39 +2592,15 @@ function YinYang:CreateWindow(title_text, startTheme)
                 Image = "rbxassetid://83537941312438",  -- candado abierto
                 ImageColor3 = Theme.Text,
                 ScaleType = Enum.ScaleType.Stretch,
-                ZIndex = 13
+                ZIndex = 15
             })
             corner(PinBtn, 6)
             stroke(PinBtn, Theme.Stroke, 1, 0.5)
 
-            --// Switch Compacto (16x16 knob, 40x20 track)
-            local HolderSwitch = mk("Frame", {
-                Parent = Holder,
-                Size = UDim2.new(0, 40, 0, 20),
-                Position = UDim2.new(1, -34, 0.5, -10),
-                BackgroundColor3 = state and Theme.ToggleOn or Theme.AccentOff,
-                ZIndex = 10
-            })
-            HolderSwitch:SetAttribute("ThemeRole", state and "ToggleOn" or "AccentOff")
-            corner(HolderSwitch, 999)
-
-            local HolderKnob = mk("Frame", {
-                Parent = HolderSwitch,
-                Size = UDim2.new(0, 16, 0, 16),
-                Position = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8),
-                BackgroundColor3 = Color3.new(1, 1, 1),
-                ZIndex = 11
-            })
-            corner(HolderKnob, 999)
-
-            --// Área clickeable — no cubre la zona de botones de la derecha
-            local HolderClick = mk("TextButton", {
-                Parent = Holder,
-                Size = UDim2.new(1, -134, 1, 0),
-                BackgroundTransparency = 1,
-                Text = "",
-                ZIndex = 12
-            })
+            --// El switch ya existe en tog.Switch, reposicionarlo para dar espacio a los botones
+            HolderSwitch.Position = UDim2.new(1, -34, 0.5, -14)
+            HolderClick.Size = UDim2.new(1, -134, 1, 0)
+            HolderClick.ZIndex = 14
             
             --// ═════════════════════════════════════════════════════════════════════════
             --// PARTE 2: VENTANA FLOTANTE (RECONSTRUIDA)
@@ -2744,12 +2701,8 @@ function YinYang:CreateWindow(title_text, startTheme)
                     state = not state
                     playSound(Sounds.Click, 0.5)
                     updateFloatVisual()
-                    --// Sincronizar switch en pestaña
-                    TweenService:Create(HolderSwitch, TweenInfo.new(0.15),
-                        {BackgroundColor3 = state and Theme.ToggleOn or Theme.AccentOff}):Play()
-                    TweenService:Create(HolderKnob, TweenInfo.new(0.15),
-                        {Position = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)}):Play()
-                    pcall(cb, state)
+                    --// Sincronizar switch en pestaña via SetValue (no dispara cb)
+                    tog.SetValue(state)
                 end)
 
                 --// SINCRONIZAR GLOW CON VENTANA
@@ -2840,25 +2793,7 @@ function YinYang:CreateWindow(title_text, startTheme)
                     or  "rbxassetid://83537941312438"   -- candado abierto (libre)
             end)
 
-            --// ═════════════════════════════════════════════════════════════════════════
-            --// CLICK EN SWITCH DE PESTAÑA
-            --// ═════════════════════════════════════════════════════════════════════════
-            
-            HolderClick.MouseButton1Click:Connect(function()
-                state = not state
-                playSound(Sounds.Click, 0.5)
-                
-                --// Tween 1: Color
-                TweenService:Create(HolderSwitch, TweenInfo.new(0.15), 
-                    {BackgroundColor3 = state and Theme.ToggleOn or Theme.AccentOff}):Play()
-                
-                --// Tween 2: Knob
-                TweenService:Create(HolderKnob, TweenInfo.new(0.15), 
-                    {Position = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)}):Play()
-                
-                pcall(cb, state)
-            end)
-            
+            --// El click del switch en pestaña ya lo maneja CreateToggle internamente
             resetScrollTop(TabPage)
         end
 
@@ -7176,12 +7111,12 @@ function YinYang:CreateWindow(title_text, startTheme)
             end
 
             local parseOk, data = pcall(function() return loadstring(raw)() end)
-            if not parseOk or type(data) ~= "table" or not data.Tracks then
+            if not parseOk or type(data) ~= "table" or not data.Catalog then
                 print("[YinYang Spotify] ❌ Error al parsear catálogo")
                 return
             end
 
-            local catalog = data.Tracks
+            local catalog = data.Catalog
             print("[YinYang Spotify] ✅ " .. #catalog .. " tracks cargados")
 
             --// Crear cards de tracks
