@@ -2702,6 +2702,7 @@ function YinYang:CreateWindow(title_text, startTheme)
                     updateFloatVisual()
                     --// Sincronizar switch en pestaña via SetValue (no dispara cb)
                     tog.SetValue(state)
+                    pcall(cb, state)
                 end)
 
                 --// SINCRONIZAR GLOW CON VENTANA
