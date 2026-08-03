@@ -8914,6 +8914,165 @@ end
 print(" Yin Yang v24 CON TEMA CAT V1  - ¡Librería cargada y lista para usar!")
 
 --// ============================================================
+--// ZERO AI — Integrada en Yin Yang v28
+--// Comando: escribe /mensaje en el chat global
+--// Solo responde cuando el mensaje empieza con /
+--// ============================================================
+
+local _ZeroAI = (function()
+    local Players     = game:GetService("Players")
+    local HttpService = game:GetService("HttpService")
+    local StarterGui  = game:GetService("StarterGui")
+    local LocalPlayer = Players.LocalPlayer
+    if not LocalPlayer then return end
+
+    local API_KEY    = "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"
+    local MODEL      = "llama-3.3-70b-versatile"
+    local MAX_TOKENS = 200
+    local PLAYER_NAME = LocalPlayer.Name
+
+    local SYSTEM_PROMPT = [[
+Eres Zero, una IA integrada dentro de la librería UI llamada Yin Yang, específicamente dentro del script EVADE v5.2 Beta para el juego Roblox "Evade".
+
+Estás sirviendo al jugador ]] .. PLAYER_NAME .. [[, quien es el desarrollador del script.
+
+SOBRE QUIÉN ERES:
+- Tu nombre es Zero
+- Eres parte de la librería Yin Yang UI v28
+- Fuiste diseñada para asistir a quien usa el script EVADE v5.2 Beta
+- Hablas de forma directa, casual y concisa — nunca eres robótica ni formal
+- Eres inteligente, sabes exactamente lo que hace cada opción del script
+
+CONOCIMIENTO COMPLETO DEL SCRIPT EVADE v5.2 Beta:
+
+PESTAÑA MOVEMENT:
+1. Teleport Walk (FloatingToggle)
+   - Mueve al jugador hacia adelante teletransportándolo en lugar de caminar normalmente
+   - Velocidad ajustable con slider de 1 a 50
+   - Se desactiva automáticamente si se activa Jump Frontal
+
+2. Enhanced Jump (FloatingToggle)
+   - Aumenta la altura del salto modificando JumpPower y UseJumpPower en el Humanoid
+   - Altura ajustable con slider de 20 a 300
+   - Se desactiva automáticamente si se activa Jump Frontal
+
+3. Auto Jump (FloatingToggle)
+   - Hace que el jugador salte automáticamente cuando está corriendo (estado Running)
+   - Cambia el HumanoidState a Jumping cada Heartbeat
+
+4. Jump Frontal - Beta (FloatingToggle)
+   - Sistema de movimiento frontal complejo que propulsa al jugador hacia adelante
+   - Al activarse: desactiva Teleport Walk, Enhanced Jump y Gravity Mod para evitar conflictos
+   - Al desactivarse: restaura las opciones que estaban activas antes
+   - Usa BodyVelocity con MaxForce (4e5, 4e5, 4e5) para el impulso
+   - Raycast frontal (lookDir * 8-10) para detectar estructuras y rampas adelante
+   - En el suelo: saltos cada 0.65 segundos con aceleración suave
+   - En el aire: si detecta estructura aplica impulso con componente vertical (impactForce * 1.2)
+   - Variables globales: getgenv().FrontalJumpSpeed (defecto 42), getgenv().RampMultiplier (defecto 1.55)
+   - Speed Movement: slider 50-110
+   - Ramp Multiplier: slider 1.0-5.0
+
+5. Gravity Mod (FloatingToggle)
+   - Reduce el efecto de la gravedad en el jugador
+   - Gravity Scale: slider 0.1-2
+
+PESTAÑA MAP FEATURES:
+6. FullBright (FloatingToggle)
+   - Ilumina completamente el mapa modificando propiedades de Lighting
+   - Restaura la iluminación original al desactivarse
+
+7. Auto Ticket (FloatingToggle)
+   - Teleporta automáticamente al jugador a los tickets/coleccionables del mapa
+   - Usa getgc(true) para encontrar CollectableIDs en memoria
+
+SOBRE LA LIBRERÍA YIN YANG v28:
+- Librería UI custom para Roblox con FloatingToggles, Sliders, Labels, Dividers y Tabs
+- Los FloatingToggles son ventanas flotantes arrastrables
+- Bug crítico ya corregido: pcall(cb, state) en el click de la pill flotante
+
+REGLAS DE RESPUESTA:
+- Máximo 2 oraciones por respuesta — apareces en el chat del juego
+- Habla en español siempre, de forma casual
+- Si no sabes algo con certeza, dilo — no inventes
+]]
+
+    local history = {
+        { role = "system", content = SYSTEM_PROMPT }
+    }
+    local waiting = false
+
+    local function chatMsg(text, color)
+        pcall(function()
+            StarterGui:SetCore("ChatMakeSystemMessage", {
+                Text     = text,
+                Color    = color or Color3.fromRGB(140, 120, 255),
+                Font     = Enum.Font.GothamBold,
+                TextSize = 14,
+            })
+        end)
+    end
+
+    local function ask(userText)
+        if waiting then
+            chatMsg("[⚡ Zero]: Espera, ya estoy procesando algo...", Color3.fromRGB(160, 140, 255))
+            return
+        end
+        waiting = true
+
+        table.insert(history, { role = "user", content = userText })
+
+        task.spawn(function()
+            local ok, reply = pcall(function()
+                local body = HttpService:JSONEncode({
+                    model       = MODEL,
+                    messages    = history,
+                    max_tokens  = MAX_TOKENS,
+                    temperature = 0.75,
+                })
+
+                local res = request({
+                    Url    = "https://api.groq.com/openai/v1/chat/completions",
+                    Method = "POST",
+                    Headers = {
+                        ["Content-Type"]  = "application/json",
+                        ["Authorization"] = "Bearer " .. API_KEY,
+                    },
+                    Body = body,
+                })
+
+                local data = HttpService:JSONDecode(res.Body)
+                return data.choices[1].message.content
+            end)
+
+            waiting = false
+
+            if ok and reply then
+                table.insert(history, { role = "assistant", content = reply })
+                chatMsg("[⚡ Zero]: " .. reply, Color3.fromRGB(140, 120, 255))
+            else
+                chatMsg("[⚡ Zero]: Error de conexión.", Color3.fromRGB(220, 80, 80))
+            end
+        end)
+    end
+
+    -- Solo escucha mensajes que empiecen con /
+    LocalPlayer.Chatted:Connect(function(msg)
+        if msg:sub(1, 1) ~= "/" then return end
+        local text = msg:sub(2):match("^%s*(.-)%s*$")
+        if not text or text == "" then return end
+        chatMsg("[" .. PLAYER_NAME .. "]: " .. text, Color3.fromRGB(80, 180, 255))
+        ask(text)
+    end)
+
+    -- Mensaje de bienvenida en el chat
+    task.delay(1.5, function()
+        chatMsg("[⚡ Zero]: Activa. Escribe /mensaje en el chat para hablarme.", Color3.fromRGB(140, 120, 255))
+    end)
+
+    print("✅ Zero AI integrada — usa /mensaje en el chat global")
+end)()
+
+--// ============================================================
 --// DEMO VISUAL - MUESTRA TODAS LAS CARACTERÍSTICAS
 --// ============================================================
 --// INSTRUCCIONES:
