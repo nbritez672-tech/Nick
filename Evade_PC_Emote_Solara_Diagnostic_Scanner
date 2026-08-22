@@ -1,0 +1,709 @@
+--[[
+    EVADE — PC/SOLARA EMOTE DIAGNOSTIC SCANNER
+    ================================================================
+    Scanner independiente y de solo lectura para diagnosticar por qué
+    la sustitución visual de emotes funciona en celular pero no en PC.
+
+    El scanner:
+      * Inspecciona los Animator/AnimationController del rig visual.
+      * Lista AnimationTracks activos, IDs, prioridades y estados.
+      * Busca los ModuleScripts de emotes en Items.ItemPacks/BaseItems.
+      * Verifica CharacterClassic, EmoteModel y árboles de props.
+      * Revisa la ruta del sonido EmoteSound en Workspace.Players.
+      * Comprueba capacidades básicas del entorno Solara.
+      * Muestra el informe en una GUI independiente.
+      * Copia automáticamente el informe con setclipboard si existe.
+
+    No clona, no destruye, no reproduce emotes, no dispara remotes y no
+    modifica el juego. Solo elimina una GUI anterior con su propio nombre.
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+
+local GUI_NAME = "YY_PC_Emote_Diagnostic_Scanner"
+local REPORT_FILE = "YY_PC_Emote_Diagnostic_Report.txt"
+local MAX_LINES = 3200
+local lines = {}
+local lastResult = ""
+local scanRunning = false
+
+local function add(value)
+    if #lines < MAX_LINES then
+        lines[#lines + 1] = tostring(value)
+    end
+end
+
+local function safeCall(callback, fallback)
+    local ok, result = pcall(callback)
+    if ok then
+        return result
+    end
+    return fallback
+end
+
+local function safeString(value, fallback)
+    local ok, result = pcall(function()
+        return tostring(value)
+    end)
+    return ok and result or (fallback or "<error>")
+end
+
+local function safeClass(inst)
+    if not inst then return "<nil>" end
+    return safeCall(function() return inst.ClassName end, "<ClassName error>")
+end
+
+local function safeName(inst)
+    if not inst then return "<nil>" end
+    return safeCall(function() return inst.Name end, "<Name error>")
+end
+
+local function safeFullName(inst)
+    if not inst then return "<nil>" end
+    return safeCall(function() return inst:GetFullName() end, "<GetFullName error>")
+end
+
+local function safeProperty(inst, property, fallback)
+    if not inst then return fallback end
+    return safeCall(function() return inst[property] end, fallback)
+end
+
+local function safeBool(inst, property)
+    local value = safeProperty(inst, property, nil)
+    if value == nil then return "<unavailable>" end
+    return tostring(value)
+end
+
+local function safePath(inst, root)
+    if not inst or not root then return "<nil>" end
+    local full = safeFullName(inst)
+    local rootFull = safeFullName(root)
+    local prefix = rootFull .. "."
+    if full:sub(1, #prefix) == prefix then
+        return full:sub(#prefix + 1)
+    end
+    return full
+end
+
+local function getExecutorParent()
+    local parent = nil
+    if type(gethui) == "function" then
+        parent = safeCall(function() return gethui() end, nil)
+    end
+    if not parent then
+        parent = safeCall(function() return game:GetService("CoreGui") end, nil)
+    end
+    if not parent and LocalPlayer then
+        parent = safeCall(function() return LocalPlayer:WaitForChild("PlayerGui") end, nil)
+    end
+    return parent
+end
+
+local function setClipboard(text)
+    if type(setclipboard) == "function" then
+        local ok = pcall(setclipboard, text)
+        if ok then return true, "setclipboard" end
+    end
+    if type(toclipboard) == "function" then
+        local ok = pcall(toclipboard, text)
+        if ok then return true, "toclipboard" end
+    end
+    return false, "clipboard function unavailable"
+end
+
+local function saveReport(text)
+    if type(writefile) == "function" then
+        local ok = pcall(writefile, REPORT_FILE, text)
+        if ok then return true end
+    end
+    return false
+end
+
+local function countDescendants(inst)
+    if not inst then return 0 end
+    return safeCall(function() return #inst:GetDescendants() end, 0)
+end
+
+local function formatVector(value)
+    if typeof(value) ~= "Vector3" then return "<not Vector3>" end
+    return string.format("(%.3f, %.3f, %.3f)", value.X, value.Y, value.Z)
+end
+
+local function formatCFrame(value)
+    if typeof(value) ~= "CFrame" then return "<not CFrame>" end
+    local position = value.Position
+    local x, y, z = value:ToOrientation()
+    return string.format(
+        "pos=(%.3f, %.3f, %.3f) rot=(%.3f, %.3f, %.3f)",
+        position.X, position.Y, position.Z, x, y, z
+    )
+end
+
+local function scanExecutorCapabilities()
+    add("===== EXECUTOR / PC CAPABILITIES =====")
+    add("setclipboard=" .. tostring(type(setclipboard) == "function"))
+    add("toclipboard=" .. tostring(type(toclipboard) == "function"))
+    add("writefile=" .. tostring(type(writefile) == "function"))
+    add("gethui=" .. tostring(type(gethui) == "function"))
+    add("request=" .. tostring(type(request) == "function"))
+    add("http_request=" .. tostring(type(http_request) == "function"))
+    add("syn.request=" .. tostring(type(syn) == "table" and type(syn.request) == "function"))
+    add("task=" .. tostring(type(task) == "table"))
+    add("UserInputService.KeyboardEnabled=" .. tostring(safeProperty(UserInputService, "KeyboardEnabled", "<unavailable>")))
+    add("UserInputService.TouchEnabled=" .. tostring(safeProperty(UserInputService, "TouchEnabled", "<unavailable>")))
+    add("UserInputService.GamepadEnabled=" .. tostring(safeProperty(UserInputService, "GamepadEnabled", "<unavailable>")))
+    add("")
+end
+
+local function scanGameContext()
+    add("===== GAME CONTEXT =====")
+    add("PlaceId=" .. safeString(game.PlaceId))
+    add("JobId=" .. safeString(game.JobId))
+    add("GameLoaded=" .. safeString(game:IsLoaded()))
+    add("LocalPlayer=" .. safeString(LocalPlayer and LocalPlayer.Name or "<nil>"))
+    add("LocalUserId=" .. safeString(LocalPlayer and LocalPlayer.UserId or "<nil>"))
+    add("CameraType=" .. safeString(safeProperty(workspace.CurrentCamera, "CameraType", "<unavailable>")))
+    add("")
+end
+
+local function scanAnimator(animator, label)
+    if not animator then
+        add(label .. "=<missing>")
+        return
+    end
+
+    add(label .. "=" .. safeFullName(animator) .. " [" .. safeClass(animator) .. "]")
+    add(label .. ".Parent=" .. safeFullName(animator.Parent))
+    add(label .. ".Descendants=" .. tostring(countDescendants(animator)))
+
+    local tracks = safeCall(function() return animator:GetPlayingAnimationTracks() end, nil)
+    if not tracks then
+        add(label .. ".GetPlayingAnimationTracks=<error>")
+        return
+    end
+
+    add(label .. ".PlayingTracks=" .. tostring(#tracks))
+    for index, track in ipairs(tracks) do
+        if index > 80 then
+            add(label .. ".TRUNCATED_TRACKS=true")
+            break
+        end
+        local animation = safeProperty(track, "Animation", nil)
+        local animationId = animation and safeProperty(animation, "AnimationId", "<missing>") or "<missing>"
+        add(string.format(
+            "%s.TRACK[%d] Name=%s AnimationId=%s Priority=%s Looped=%s IsPlaying=%s Speed=%s TimePosition=%s Length=%s Weight=%s",
+            label,
+            index,
+            safeString(safeProperty(track, "Name", "<missing>")),
+            safeString(animationId),
+            safeString(safeProperty(track, "Priority", "<unavailable>")),
+            safeString(safeProperty(track, "Looped", "<unavailable>")),
+            safeString(safeProperty(track, "IsPlaying", "<unavailable>")),
+            safeString(safeProperty(track, "Speed", "<unavailable>")),
+            safeString(safeProperty(track, "TimePosition", "<unavailable>")),
+            safeString(safeProperty(track, "Length", "<unavailable>")),
+            safeString(safeProperty(track, "WeightCurrent", "<unavailable>"))
+        ))
+    end
+end
+
+local function scanVisualRig()
+    add("===== VISUAL RIG / ANIMATION ROUTES =====")
+    local rigs = workspace:FindFirstChild("Rigs")
+    add("workspace.Rigs=" .. safeFullName(rigs))
+    if not rigs then
+        add("ERROR: workspace.Rigs missing")
+        add("")
+        return
+    end
+
+    local rig = rigs:FindFirstChild(LocalPlayer.Name)
+    add("workspace.Rigs." .. LocalPlayer.Name .. "=" .. safeFullName(rig))
+    if not rig then
+        add("ERROR: local visual rig missing")
+        add("")
+        return
+    end
+
+    add("Rig.Class=" .. safeClass(rig))
+    add("Rig.Descendants=" .. tostring(countDescendants(rig)))
+    add("Rig.PrimaryPart=" .. safeFullName(safeProperty(rig, "PrimaryPart", nil)))
+    add("Rig.Humanoid=" .. safeFullName(rig:FindFirstChildOfClass("Humanoid")))
+    add("Rig.AnimationController=" .. safeFullName(rig:FindFirstChildOfClass("AnimationController")))
+
+    local humanoid = rig:FindFirstChildOfClass("Humanoid")
+    local controller = rig:FindFirstChildOfClass("AnimationController")
+    local humanoidAnimator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+    local controllerAnimator = controller and controller:FindFirstChildOfClass("Animator")
+
+    add("Humanoid.RigType=" .. safeString(humanoid and safeProperty(humanoid, "RigType", "<unavailable>") or "<missing>"))
+    add("Humanoid.Health=" .. safeString(humanoid and safeProperty(humanoid, "Health", "<unavailable>") or "<missing>"))
+    scanAnimator(humanoidAnimator, "Rig.Humanoid.Animator")
+    scanAnimator(controllerAnimator, "Rig.AnimationController.Animator")
+
+    local expectedParts = {
+        "HumanoidRootPart", "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg",
+    }
+    add("===== EXPECTED R6 PARTS =====")
+    for _, partName in ipairs(expectedParts) do
+        local part = rig:FindFirstChild(partName, true)
+        add(partName .. "=" .. safeFullName(part) .. " [" .. safeClass(part) .. "]")
+    end
+    add("")
+end
+
+local TARGET_EMOTE_NAMES = {
+    "RockinStride", "ZombieStride", "GhoulishGalleon", "Griddy", "BananaDance",
+    "OiiaOiia", "Writhing", "AstroSlide", "Popular", "Moonwalk", "Golpeador",
+    "HeadlessBaller", "Banger", "Broom", "BoldMarch",
+}
+
+local function appendTreeSummary(root, maxNodes)
+    if not root then return end
+    local nodes = root:GetDescendants()
+    local limit = math.min(#nodes, maxNodes or 160)
+    for index = 1, limit do
+        local inst = nodes[index]
+        local line = string.format(
+            "TREE[%d] %s [%s] Archivable=%s",
+            index,
+            safePath(inst, root),
+            safeClass(inst),
+            safeBool(inst, "Archivable")
+        )
+        if inst:IsA("Animation") then
+            line = line .. " AnimationId=" .. safeString(safeProperty(inst, "AnimationId", "<unavailable>"))
+        elseif inst:IsA("Sound") then
+            line = line .. " SoundId=" .. safeString(safeProperty(inst, "SoundId", "<unavailable>"))
+        elseif inst:IsA("BasePart") then
+            line = line .. " Size=" .. formatVector(safeProperty(inst, "Size", nil))
+        elseif inst:IsA("Motor6D") or inst:IsA("Weld") or inst:IsA("WeldConstraint") then
+            line = line
+                .. " Part0=" .. safeFullName(safeProperty(inst, "Part0", nil))
+                .. " Part1=" .. safeFullName(safeProperty(inst, "Part1", nil))
+        end
+        add(line)
+    end
+    if #nodes > limit then
+        add("TREE_TRUNCATED=true total=" .. tostring(#nodes) .. " shown=" .. tostring(limit))
+    end
+end
+
+local function scanEmoteModules()
+    add("===== EMOTE MODULE DISCOVERY =====")
+    local items = ReplicatedStorage:FindFirstChild("Items")
+    add("ReplicatedStorage.Items=" .. safeFullName(items))
+    if not items then
+        add("ERROR: ReplicatedStorage.Items missing")
+        add("")
+        return
+    end
+
+    local roots = {}
+    local packs = items:FindFirstChild("ItemPacks")
+    local baseItems = items:FindFirstChild("BaseItems")
+    if packs then roots[#roots + 1] = packs end
+    if baseItems then roots[#roots + 1] = baseItems end
+    add("ScanRoots=" .. tostring(#roots))
+    add("ItemPacks=" .. safeFullName(packs))
+    add("BaseItems=" .. safeFullName(baseItems))
+
+    local foundByPath = {}
+    for _, root in ipairs(roots) do
+        for _, inst in ipairs(root:GetDescendants()) do
+            if inst:IsA("ModuleScript") then
+                local name = safeName(inst)
+                local lowered = string.lower(name)
+                local explicit = false
+                for _, target in ipairs(TARGET_EMOTE_NAMES) do
+                    if name == target then
+                        explicit = true
+                        break
+                    end
+                end
+                if explicit or string.find(lowered, "emote", 1, true) then
+                    local path = safeFullName(inst)
+                    if not foundByPath[path] then
+                        foundByPath[path] = true
+                        add("MODULE name=" .. name .. " path=" .. path)
+                        add("MODULE.CharacterClassic=" .. safeFullName(inst:FindFirstChild("CharacterClassic")))
+                        local classic = inst:FindFirstChild("CharacterClassic")
+                        local emoteModel = classic and classic:FindFirstChild("EmoteModel")
+                        add("MODULE.EmoteModel=" .. safeFullName(emoteModel))
+                        add("MODULE.ModuleChildren=" .. tostring(#inst:GetChildren()))
+                        if classic then
+                            add("MODULE.CharacterClassicChildren=" .. tostring(#classic:GetChildren()))
+                            add("MODULE.CharacterClassicDescendants=" .. tostring(countDescendants(classic)))
+                        end
+                        if emoteModel then
+                            add("MODULE.EmoteModelChildren=" .. tostring(#emoteModel:GetChildren()))
+                            add("MODULE.EmoteModelDescendants=" .. tostring(countDescendants(emoteModel)))
+                            add("MODULE.EmoteModel.PrimaryPart=" .. safeFullName(safeProperty(emoteModel, "PrimaryPart", nil)))
+                            add("MODULE.EmoteModel.Pivot=" .. formatCFrame(safeCall(function() return emoteModel:GetPivot() end, nil)))
+                            appendTreeSummary(emoteModel, 220)
+                        end
+                        add("")
+                    end
+                end
+            end
+        end
+    end
+
+    local totalFound = 0
+    for _ in pairs(foundByPath) do totalFound = totalFound + 1 end
+    add("EmoteModuleMatches=" .. tostring(totalFound))
+    if totalFound == 0 then
+        add("WARNING: no configured emote ModuleScript was found in ItemPacks/BaseItems")
+    end
+    add("")
+end
+
+local function scanRuntimeSoundRoute()
+    add("===== EMOTE SOUND ROUTE =====")
+    local playersFolder = workspace:FindFirstChild("Players")
+    add("workspace.Players=" .. safeFullName(playersFolder))
+    local charModel = playersFolder and playersFolder:FindFirstChild(LocalPlayer.Name)
+    add("workspace.Players.LocalPlayerModel=" .. safeFullName(charModel))
+    local hrp = charModel and charModel:FindFirstChild("HumanoidRootPart")
+    local soundPos = hrp and hrp:FindFirstChild("SoundPos")
+    add("SoundPos=" .. safeFullName(soundPos))
+    if soundPos then
+        local sounds = soundPos:GetChildren()
+        add("SoundPos.Children=" .. tostring(#sounds))
+        for _, inst in ipairs(sounds) do
+            if inst:IsA("Sound") then
+                add("SOUND name=" .. safeName(inst)
+                    .. " SoundId=" .. safeString(safeProperty(inst, "SoundId", "<unavailable>"))
+                    .. " IsPlaying=" .. safeString(safeProperty(inst, "IsPlaying", "<unavailable>"))
+                    .. " Volume=" .. safeString(safeProperty(inst, "Volume", "<unavailable>")))
+            end
+        end
+    else
+        add("WARNING: SoundPos not found")
+    end
+    add("")
+end
+
+local function scanRelevantEvents()
+    add("===== RELEVANT EVENT STRUCTURES =====")
+    local events = ReplicatedStorage:FindFirstChild("Events")
+    local services = ReplicatedStorage:FindFirstChild("Services")
+    add("ReplicatedStorage.Events=" .. safeFullName(events))
+    add("ReplicatedStorage.Services=" .. safeFullName(services))
+    if events then
+        for _, inst in ipairs(events:GetChildren()) do
+            local lowered = string.lower(safeName(inst))
+            if string.find(lowered, "emote", 1, true)
+            or string.find(lowered, "anim", 1, true)
+            or string.find(lowered, "sound", 1, true) then
+                add("EVENT " .. safeFullName(inst) .. " [" .. safeClass(inst) .. "]")
+            end
+        end
+    end
+    if services then
+        local data = services:FindFirstChild("Data")
+        local registry = data and data:FindFirstChild("ServerStateRegistryService")
+        add("ServerStateRegistryService=" .. safeFullName(registry))
+        if registry then
+            add("Registry.ChangedEvent=" .. safeFullName(registry:FindFirstChild("ChangedEvent")))
+        end
+    end
+    add("")
+end
+
+local function scanCurrentCharacter()
+    add("===== LOCAL CHARACTER CONTEXT =====")
+    local char = LocalPlayer and LocalPlayer.Character
+    add("LocalPlayer.Character=" .. safeFullName(char))
+    if char then
+        add("Character.Class=" .. safeClass(char))
+        add("Character.Descendants=" .. tostring(countDescendants(char)))
+        add("Character.Humanoid=" .. safeFullName(char:FindFirstChildOfClass("Humanoid")))
+        add("Character.Animator=" .. safeFullName(char:FindFirstChildOfClass("Humanoid") and char:FindFirstChildOfClass("Humanoid"):FindFirstChildOfClass("Animator")))
+    end
+    add("")
+end
+
+local function runScan()
+    if scanRunning then return "SCAN_ALREADY_RUNNING" end
+    scanRunning = true
+    lines = {}
+
+    add("YY PC/SOLARA EMOTE DIAGNOSTIC REPORT")
+    add("Timestamp=" .. os.date("!%Y-%m-%dT%H:%M:%SZ"))
+    add("ReadOnly=true")
+    add("")
+
+    local ok, err = pcall(function()
+        scanExecutorCapabilities()
+        scanGameContext()
+        scanCurrentCharacter()
+        scanVisualRig()
+        scanEmoteModules()
+        scanRuntimeSoundRoute()
+        scanRelevantEvents()
+    end)
+    if not ok then
+        add("FATAL_SCAN_ERROR=" .. safeString(err))
+    end
+
+    if #lines >= MAX_LINES then
+        add("TRUNCATED=true MAX_LINES=" .. tostring(MAX_LINES))
+    else
+        add("TRUNCATED=false")
+    end
+    add("")
+    add("END_REPORT")
+
+    lastResult = table.concat(lines, "\n")
+    local copied, copyMethod = setClipboard(lastResult)
+    local saved = saveReport(lastResult)
+    scanRunning = false
+
+    return lastResult, copied, copyMethod, saved
+end
+
+local function createGui()
+    local parent = getExecutorParent()
+    if not parent then
+        warn("[YY PC Emote Scanner] No GUI parent available")
+        return nil
+    end
+
+    local old = parent:FindFirstChild(GUI_NAME)
+    if old then
+        pcall(function() old:Destroy() end)
+    end
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = GUI_NAME
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    gui.DisplayOrder = 999998
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.Parent = parent
+
+    local panel = Instance.new("Frame")
+    panel.Name = "Panel"
+    panel.AnchorPoint = Vector2.new(0.5, 0.5)
+    panel.Position = UDim2.fromScale(0.5, 0.5)
+    panel.Size = UDim2.fromOffset(520, 520)
+    panel.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+    panel.BorderSizePixel = 0
+    panel.Parent = gui
+
+    local panelCorner = Instance.new("UICorner")
+    panelCorner.CornerRadius = UDim.new(0, 12)
+    panelCorner.Parent = panel
+
+    local panelStroke = Instance.new("UIStroke")
+    panelStroke.Color = Color3.fromRGB(105, 105, 120)
+    panelStroke.Transparency = 0.25
+    panelStroke.Thickness = 1
+    panelStroke.Parent = panel
+
+    local top = Instance.new("Frame")
+    top.Name = "DragBar"
+    top.Size = UDim2.new(1, 0, 0, 42)
+    top.BackgroundColor3 = Color3.fromRGB(29, 29, 36)
+    top.BorderSizePixel = 0
+    top.Parent = panel
+
+    local topCorner = Instance.new("UICorner")
+    topCorner.CornerRadius = UDim.new(0, 12)
+    topCorner.Parent = top
+
+    local cover = Instance.new("Frame")
+    cover.Size = UDim2.new(1, 0, 0, 12)
+    cover.Position = UDim2.new(0, 0, 1, -12)
+    cover.BackgroundColor3 = top.BackgroundColor3
+    cover.BorderSizePixel = 0
+    cover.Parent = top
+
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Position = UDim2.fromOffset(14, 0)
+    title.Size = UDim2.new(1, -62, 1, 0)
+    title.Font = Enum.Font.GothamBold
+    title.Text = "PC EMOTE DIAGNOSTIC"
+    title.TextColor3 = Color3.fromRGB(245, 245, 250)
+    title.TextSize = 13
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = top
+
+    local close = Instance.new("TextButton")
+    close.Name = "Close"
+    close.AnchorPoint = Vector2.new(1, 0.5)
+    close.Position = UDim2.new(1, -10, 0.5, 0)
+    close.Size = UDim2.fromOffset(26, 26)
+    close.BackgroundColor3 = Color3.fromRGB(48, 48, 58)
+    close.BorderSizePixel = 0
+    close.AutoButtonColor = false
+    close.Font = Enum.Font.GothamBold
+    close.Text = "×"
+    close.TextColor3 = Color3.fromRGB(220, 220, 225)
+    close.TextSize = 18
+    close.Parent = top
+    local closeCorner = Instance.new("UICorner")
+    closeCorner.CornerRadius = UDim.new(0, 7)
+    closeCorner.Parent = close
+
+    local info = Instance.new("TextLabel")
+    info.BackgroundTransparency = 1
+    info.Position = UDim2.fromOffset(14, 50)
+    info.Size = UDim2.new(1, -28, 0, 28)
+    info.Font = Enum.Font.Gotham
+    info.Text = "Read-only scan • output is copied automatically"
+    info.TextColor3 = Color3.fromRGB(165, 165, 175)
+    info.TextSize = 10
+    info.TextXAlignment = Enum.TextXAlignment.Left
+    info.TextWrapped = true
+    info.Parent = panel
+
+    local resultBox = Instance.new("TextBox")
+    resultBox.Name = "Result"
+    resultBox.Position = UDim2.fromOffset(14, 84)
+    resultBox.Size = UDim2.new(1, -28, 1, -144)
+    resultBox.BackgroundColor3 = Color3.fromRGB(10, 10, 13)
+    resultBox.BorderSizePixel = 0
+    resultBox.ClearTextOnFocus = false
+    resultBox.MultiLine = true
+    resultBox.TextEditable = true
+    resultBox.Text = "Press SCAN to inspect the PC emote runtime."
+    resultBox.TextColor3 = Color3.fromRGB(222, 222, 230)
+    resultBox.TextSize = 10
+    resultBox.Font = Enum.Font.Code
+    resultBox.TextXAlignment = Enum.TextXAlignment.Left
+    resultBox.TextYAlignment = Enum.TextYAlignment.Top
+    resultBox.TextWrapped = false
+    resultBox.Parent = panel
+
+    local boxCorner = Instance.new("UICorner")
+    boxCorner.CornerRadius = UDim.new(0, 8)
+    boxCorner.Parent = resultBox
+    local boxPadding = Instance.new("UIPadding")
+    boxPadding.PaddingTop = UDim.new(0, 8)
+    boxPadding.PaddingBottom = UDim.new(0, 8)
+    boxPadding.PaddingLeft = UDim.new(0, 8)
+    boxPadding.PaddingRight = UDim.new(0, 8)
+    boxPadding.Parent = resultBox
+
+    local status = Instance.new("TextLabel")
+    status.Name = "Status"
+    status.Position = UDim2.new(0, 14, 1, -51)
+    status.Size = UDim2.new(1, -270, 0, 18)
+    status.BackgroundTransparency = 1
+    status.Font = Enum.Font.Gotham
+    status.Text = "Ready"
+    status.TextColor3 = Color3.fromRGB(165, 165, 175)
+    status.TextSize = 10
+    status.TextXAlignment = Enum.TextXAlignment.Left
+    status.Parent = panel
+
+    local function makeButton(name, text, x, width)
+        local button = Instance.new("TextButton")
+        button.Name = name
+        button.Position = UDim2.new(1, x, 1, -58)
+        button.Size = UDim2.fromOffset(width, 32)
+        button.BackgroundColor3 = Color3.fromRGB(52, 52, 65)
+        button.BorderSizePixel = 0
+        button.AutoButtonColor = false
+        button.Font = Enum.Font.GothamBold
+        button.Text = text
+        button.TextColor3 = Color3.fromRGB(245, 245, 250)
+        button.TextSize = 10
+        button.Parent = panel
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 8)
+        c.Parent = button
+        return button
+    end
+
+    local scanButton = makeButton("Scan", "SCAN", -249, 72)
+    local copyButton = makeButton("Copy", "COPY", -169, 72)
+    local clearButton = makeButton("Clear", "CLEAR", -89, 72)
+
+    local function updateStatus(text, color)
+        status.Text = text
+        status.TextColor3 = color or Color3.fromRGB(165, 165, 175)
+    end
+
+    scanButton.MouseButton1Click:Connect(function()
+        updateStatus("Scanning...", Color3.fromRGB(245, 220, 130))
+        task.spawn(function()
+            local result, copied, method, saved = runScan()
+            resultBox.Text = result or "<scan failed>"
+            local copyText = copied and ("copied via " .. tostring(method)) or "clipboard unavailable"
+            local fileText = saved and "file saved" or "file not saved"
+            updateStatus("Done • " .. copyText .. " • " .. fileText, copied and Color3.fromRGB(145, 255, 180) or Color3.fromRGB(255, 180, 135))
+        end)
+    end)
+
+    copyButton.MouseButton1Click:Connect(function()
+        if lastResult == "" then
+            updateStatus("Run SCAN first", Color3.fromRGB(255, 190, 130))
+            return
+        end
+        local copied, method = setClipboard(lastResult)
+        updateStatus(copied and ("Copied via " .. tostring(method)) or "Clipboard function unavailable", copied and Color3.fromRGB(145, 255, 180) or Color3.fromRGB(255, 180, 135))
+    end)
+
+    clearButton.MouseButton1Click:Connect(function()
+        resultBox.Text = "Press SCAN to inspect the PC emote runtime."
+        lastResult = ""
+        updateStatus("Cleared", Color3.fromRGB(165, 165, 175))
+    end)
+
+    close.MouseButton1Click:Connect(function()
+        pcall(function() gui:Destroy() end)
+    end)
+
+    local dragging = false
+    local dragStart = nil
+    local startPosition = nil
+
+    top.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPosition = panel.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement
+        and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        local delta = input.Position - dragStart
+        panel.Position = UDim2.new(
+            startPosition.X.Scale,
+            startPosition.X.Offset + delta.X,
+            startPosition.Y.Scale,
+            startPosition.Y.Offset + delta.Y
+        )
+    end)
+
+    updateStatus("Ready • press SCAN", Color3.fromRGB(165, 165, 175))
+    return gui
+end
+
+local gui = createGui()
+if gui then
+    print("[YY PC Emote Scanner] GUI loaded. Press SCAN.")
+else
+    local result, copied, method, saved = runScan()
+    print(result)
+    print("[YY PC Emote Scanner] copied=" .. tostring(copied) .. " method=" .. tostring(method) .. " saved=" .. tostring(saved))
+end
