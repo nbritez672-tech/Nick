@@ -2635,6 +2635,8 @@ local roundCleanupConnections = {}
 local inEvadeEmote      = false  -- true cuando Evade está en estado "Emote" real o el detector PC confirma un Action track
 local directTrackSeen   = {}
 local directSelectedIdx = nil
+local directNoActionSince = nil
+local directPreserveSourceTrack = false
 
 local function disconnectEmoteConnections(list)
     for _, connection in ipairs(list) do
@@ -2694,6 +2696,8 @@ local function resetEmoteRuntime()
     substituting = false
     table.clear(directTrackSeen)
     directSelectedIdx = nil
+    directNoActionSince = nil
+    directPreserveSourceTrack = false
 end
 
 local function bindEmoteCharacterLifecycle(char)
@@ -2966,7 +2970,9 @@ local function onEmoteAnimPlayed(anim, track)
         end
     end)
 
-    pcall(function() track:Stop(0) end)
+    if not directPreserveSourceTrack then
+        pcall(function() track:Stop(0) end)
+    end
 
     local fake = Instance.new("Animation")
     fake.AnimationId = emote.animId
@@ -3043,6 +3049,7 @@ end
 --// el track ya estaba activo antes de conectar el listener.
 local directEmoteDetectorConnection = nil
 local directEmotePollAccumulator = 0
+local DIRECT_EMOTE_END_GRACE = 0.25
 
 local function isDirectActionTrack(track)
     if not track then return false end
@@ -3098,7 +3105,11 @@ local function pollDirectEmoteTracks()
                             if not directTrackSeen[track] then
                                 directTrackSeen[track] = true
                                 inEvadeEmote = true
-                                onEmoteAnimPlayed(animator, track)
+                                pcall(function()
+                                    directPreserveSourceTrack = true
+                                    onEmoteAnimPlayed(animator, track)
+                                end)
+                                directPreserveSourceTrack = false
                             end
                         end
                     end
@@ -3113,7 +3124,23 @@ local function pollDirectEmoteTracks()
         end
     end
 
-    if not hasRealActionTrack and not activeVisualTrack then
+    if hasRealActionTrack then
+        -- El track fuente sigue activo: el emote real continúa.
+        directNoActionSince = nil
+        inEvadeEmote = true
+    elseif activeVisualTrack then
+        -- El track fuente desapareció. La tolerancia evita falsos cortes durante
+        -- el cambio de track que hace Evade al terminar el emote.
+        if not directNoActionSince then
+            directNoActionSince = os.clock()
+        elseif os.clock() - directNoActionSince >= DIRECT_EMOTE_END_GRACE then
+            cleanupActiveEmote()
+            inEvadeEmote = false
+            directNoActionSince = nil
+            table.clear(directTrackSeen)
+        end
+    else
+        directNoActionSince = nil
         inEvadeEmote = false
     end
 end
