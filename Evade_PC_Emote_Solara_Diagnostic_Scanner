@@ -2988,11 +2988,22 @@ local function onEmoteAnimPlayed(anim, track)
 
     if ok and visualTrack then
         activeVisualTrack = visualTrack
-        visualTrack.Priority = Enum.AnimationPriority.Action
+        -- El track fuente de Evade es Action3. Action quedaba por debajo y
+        -- podía dejar la sustitución en una pose congelada; el visual debe
+        -- ganar siempre la mezcla mientras el emote está activo.
+        pcall(function()
+            visualTrack.Priority = Enum.AnimationPriority.Action4
+        end)
         if emote.emoteName == "GhoulishGalleon" then
             visualTrack.Looped = true
         end
-        visualTrack:Play()
+        -- No depender de los valores por defecto de Play en Solara: fija
+        -- fade, weight y speed para evitar que el track nazca pausado.
+        visualTrack:Play(0.05, 1, 1)
+        pcall(function()
+            visualTrack:AdjustWeight(1, 0)
+            visualTrack:AdjustSpeed(1)
+        end)
 
         pcall(function()
             local rig = anim.Parent.Parent
