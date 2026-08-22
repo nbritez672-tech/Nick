@@ -9717,7 +9717,9 @@ end
     --// Sincroniza mensajes entre TODOS los jugadores conectados
     --// ═════════════════════════════════════════════════════════════════════
 
-    local BACKEND_URL = "https://yin-chat-production.up.railway.app"
+    -- Railway expone este dominio por HTTPS público; el proceso interno escucha en el puerto 8080.
+    -- No se agrega :8080 porque ese puerto no está expuesto públicamente en el dominio Railway.
+    local BACKEND_URL = "https://yin-chat-production-f239.up.railway.app"
     local ChatSyncPollRate = 2  -- segundos entre cada consulta al backend
     local knownServerIds = {}   -- IDs de mensajes de servidor ya renderizados
     local backendConnected = false
