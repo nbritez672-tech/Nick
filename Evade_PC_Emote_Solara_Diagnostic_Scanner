@@ -1,14 +1,17 @@
 --[[
-    YIN YANG — PC/SOLARA DIAGNOSTIC SCANNER V2 (SOLO LECTURA)
+    YIN YANG — PC/SOLARA DIAGNOSTIC SCANNER V3 (SOLO LECTURA)
 
-    Esta versión no modifica tracks ni instancias. Observa el Humanoid.Animator
-    y, si existe, el AnimationController.Animator del rig visual. A diferencia
-    del scanner anterior, identifica el visual por AnimationId y no solamente
-    por Priority = Action4. Esto permite detectar el visual aunque Solara o
-    Evade no apliquen la prioridad esperada.
+    Esta versión espera hasta detectar el track fuente real antes de iniciar
+    la ventana de diagnóstico. Así no importa si el usuario tarda algunos
+    segundos en comenzar el emote después de ejecutar el scanner.
 
-    Ejecutar una sola vez mientras la librería de emotes ya esté cargada.
-    Después iniciar un emote y mantenerlo activo durante unos 5 segundos.
+    Uso:
+      1. Ejecutar una sola vez con la librería cargada.
+      2. Iniciar inmediatamente o dentro de los siguientes 20 segundos el
+         emote real de Evade.
+      3. Mantenerlo activo al menos 6 segundos después de detectarlo.
+
+    No reproduce, detiene, ajusta ni destruye nada.
 ]]
 
 local Players = game:GetService("Players")
@@ -46,27 +49,24 @@ local IDLE_IDS = {
     ["rbxassetid://17524391617"] = true,
 }
 
-local function safeFullName(instance)
+local function fullName(instance)
     local ok, value = pcall(function()
         return instance and instance:GetFullName()
     end)
     return ok and value or "<unavailable>"
 end
 
-local function safeValue(callback, fallback)
+local function read(callback, fallback)
     local ok, value = pcall(callback)
-    if ok then return value end
-    return fallback
+    return ok and value or fallback
 end
 
-local function getVisualRig()
+local function makeAnimators()
     local rigs = workspace:FindFirstChild("Rigs")
-    return rigs and rigs:FindFirstChild(LocalPlayer.Name)
-end
-
-local function getAnimators(rig)
+    local rig = rigs and rigs:FindFirstChild(LocalPlayer.Name)
     local result = {}
     local seen = {}
+
     local humanoid = rig and rig:FindFirstChildOfClass("Humanoid")
     local humAnimator = humanoid and humanoid:FindFirstChildOfClass("Animator")
     if humAnimator then
@@ -79,41 +79,46 @@ local function getAnimators(rig)
     if controllerAnimator and not seen[controllerAnimator] then
         result[#result + 1] = controllerAnimator
     end
-    return result
+
+    return rig, result
 end
 
-local function classify(id, priority)
-    if id == SOURCE_ID then return "SOURCE_TRACK" end
-    if VISUAL_IDS[id] then return "VISUAL_TRACK" end
-    if IDLE_IDS[id] then return "IDLE_TRACK" end
-    if string.find(priority, "Action", 1, true) then return "OTHER_ACTION_TRACK" end
-    return "OTHER_TRACK"
-end
+local function getState(track, animator)
+    local animation = read(function() return track.Animation end, nil)
+    local id = read(function() return animation and animation.AnimationId end, "nil")
+    local priority = tostring(read(function() return track.Priority end, "unknown"))
+    local kind
+    if id == SOURCE_ID then
+        kind = "SOURCE_TRACK"
+    elseif VISUAL_IDS[id] then
+        kind = "VISUAL_TRACK"
+    elseif IDLE_IDS[id] then
+        kind = "IDLE_TRACK"
+    elseif string.find(priority, "Action", 1, true) then
+        kind = "OTHER_ACTION_TRACK"
+    else
+        kind = "OTHER_TRACK"
+    end
 
-local function snapshot(track, animator)
-    local animation = safeValue(function() return track.Animation end, nil)
-    local id = safeValue(function() return animation and animation.AnimationId end, "nil")
-    local priority = tostring(safeValue(function() return track.Priority end, "unknown"))
-    local kind = classify(id, priority)
     return {
         Track = track,
-        Animator = safeFullName(animator),
         Kind = kind,
         Id = id,
-        IsPlaying = safeValue(function() return track.IsPlaying end, "error"),
-        Speed = safeValue(function() return track.Speed end, "error"),
-        TimePosition = safeValue(function() return track.TimePosition end, "error"),
-        Length = safeValue(function() return track.Length end, "error"),
-        WeightCurrent = safeValue(function() return track.WeightCurrent end, "error"),
-        WeightTarget = safeValue(function() return track.WeightTarget end, "unavailable"),
+        Animator = fullName(animator),
+        IsPlaying = read(function() return track.IsPlaying end, "error"),
+        Speed = read(function() return track.Speed end, "error"),
+        TimePosition = read(function() return track.TimePosition end, "error"),
+        Length = read(function() return track.Length end, "error"),
+        WeightCurrent = read(function() return track.WeightCurrent end, "error"),
+        WeightTarget = read(function() return track.WeightTarget end, "unavailable"),
         Priority = priority,
-        Looped = safeValue(function() return track.Looped end, "error"),
-        IsAnimationParented = animation ~= nil and safeValue(function() return animation.Parent ~= nil end, false),
-        AnimationParent = safeValue(function() return animation and animation.Parent and animation.Parent:GetFullName() end, "nil"),
+        Looped = read(function() return track.Looped end, "error"),
+        IsAnimationParented = animation ~= nil and read(function() return animation.Parent ~= nil end, false),
+        AnimationParent = read(function() return animation and animation.Parent and animation.Parent:GetFullName() end, "nil"),
     }
 end
 
-local function formatNumber(value)
+local function number(value)
     if type(value) == "number" then
         return string.format("%.4f", value)
     end
@@ -121,13 +126,13 @@ local function formatNumber(value)
 end
 
 local function describe(state)
-    return "kind=" .. state.Kind
+    return "kind=" .. tostring(state.Kind)
         .. " id=" .. tostring(state.Id)
         .. " playing=" .. tostring(state.IsPlaying)
-        .. " speed=" .. formatNumber(state.Speed)
-        .. " time=" .. formatNumber(state.TimePosition)
-        .. " length=" .. formatNumber(state.Length)
-        .. " weight=" .. formatNumber(state.WeightCurrent)
+        .. " speed=" .. number(state.Speed)
+        .. " time=" .. number(state.TimePosition)
+        .. " length=" .. number(state.Length)
+        .. " weight=" .. number(state.WeightCurrent)
         .. " targetWeight=" .. tostring(state.WeightTarget)
         .. " prio=" .. tostring(state.Priority)
         .. " looped=" .. tostring(state.Looped)
@@ -141,55 +146,52 @@ local function add(text)
     log[#log + 1] = text
 end
 
-local rig = getVisualRig()
-if not rig then
-    add("ERROR: no se encontró Workspace.Rigs." .. LocalPlayer.Name)
+local rig, animators = makeAnimators()
+if not rig or #animators == 0 then
+    add("ERROR: no se encontró el rig visual o ningún Animator")
     local result = table.concat(log, "\n")
-    pcall(function() writefile("yy_pc_diag_scan_v2.txt", result) end)
+    pcall(function() writefile("yy_pc_diag_scan_v3.txt", result) end)
     pcall(function() setclipboard(result) end)
     return
 end
 
-local animators = getAnimators(rig)
-if #animators == 0 then
-    add("ERROR: no se encontró ningún Animator en " .. safeFullName(rig))
-    local result = table.concat(log, "\n")
-    pcall(function() writefile("yy_pc_diag_scan_v2.txt", result) end)
-    pcall(function() setclipboard(result) end)
-    return
-end
-
-add("=== PC/SOLARA DIAG SCANNER V2 ===")
-add("Rig: " .. safeFullName(rig))
+add("=== PC/SOLARA DIAG SCANNER V3 WAIT ===")
+add("Rig: " .. fullName(rig))
 for _, animator in ipairs(animators) do
-    add("Animator: " .. safeFullName(animator))
+    add("Animator: " .. fullName(animator))
 end
 add("SOURCE_ID=" .. SOURCE_ID)
-add("VISUAL_IDS=identified by AnimationId")
+add("WAIT_TIMEOUT=20s")
+add("CAPTURE_AFTER_SOURCE=6s")
 add("")
+add("WAITING_FOR_SOURCE_TRACK")
 
-local start = os.clock()
+local started = os.clock()
+local captureStarted = nil
 local sampleAccumulator = 0
 local lastStates = {}
 local previousTrackSet = {}
+local sourceEverDetected = false
 local conn
 
-local function finish()
+local function finish(reason)
     if conn then
         conn:Disconnect()
         conn = nil
     end
     add("")
-    add("=== FIN DEL SCAN V2 (5s) ===")
+    add("FINISH_REASON=" .. tostring(reason))
+    add("=== FIN DEL SCAN V3 ===")
     local result = table.concat(log, "\n")
-    pcall(function() writefile("yy_pc_diag_scan_v2.txt", result) end)
+    pcall(function() writefile("yy_pc_diag_scan_v3.txt", result) end)
     pcall(function() setclipboard(result) end)
-    print("[DIAG V2] Guardado y copiado. Líneas: " .. tostring(#log))
+    print("[DIAG V3] Guardado y copiado. Líneas: " .. tostring(#log))
 end
 
 conn = RunService.Heartbeat:Connect(function(deltaTime)
-    if os.clock() - start >= 5 then
-        finish()
+    local now = os.clock()
+    if not captureStarted and now - started >= 20 then
+        finish("TIMEOUT_WITHOUT_SOURCE_TRACK")
         return
     end
 
@@ -198,6 +200,8 @@ conn = RunService.Heartbeat:Connect(function(deltaTime)
     sampleAccumulator = 0
 
     local currentTrackSet = {}
+    local sourceDetectedThisSample = false
+
     for _, animator in ipairs(animators) do
         local ok, tracks = pcall(function()
             return animator:GetPlayingAnimationTracks()
@@ -205,11 +209,22 @@ conn = RunService.Heartbeat:Connect(function(deltaTime)
         if ok and tracks then
             for _, track in ipairs(tracks) do
                 currentTrackSet[track] = true
-                local state = snapshot(track, animator)
-                local previous = lastStates[track]
+                local state = getState(track, animator)
 
+                if state.Kind == "SOURCE_TRACK" and state.IsPlaying == true then
+                    sourceDetectedThisSample = true
+                    sourceEverDetected = true
+                    if not captureStarted then
+                        captureStarted = now
+                        add(string.format("[%06.3fs] SOURCE_DETECTED; CAPTURE_STARTED", now - started))
+                    end
+                end
+
+                local previous = lastStates[track]
                 if not previous then
-                    add(string.format("[%06.3fs] NEW_TRACK %s", os.clock() - start, describe(state)))
+                    if state.Kind ~= "IDLE_TRACK" then
+                        add(string.format("[%06.3fs] NEW_TRACK %s", now - started, describe(state)))
+                    end
                 else
                     local changes = {}
                     if previous.IsPlaying ~= state.IsPlaying then
@@ -234,10 +249,9 @@ conn = RunService.Heartbeat:Connect(function(deltaTime)
                         changes[#changes + 1] = "AnimationParented=" .. tostring(previous.IsAnimationParented) .. "->" .. tostring(state.IsAnimationParented)
                     end
                     if #changes > 0 and state.Kind ~= "IDLE_TRACK" then
-                        add(string.format("[%06.3fs] CHANGE %s | %s", os.clock() - start, tostring(state.Track), table.concat(changes, ", ")))
+                        add(string.format("[%06.3fs] CHANGE %s | %s", now - started, tostring(state.Track), table.concat(changes, ", ")))
                     end
                 end
-
                 lastStates[track] = state
             end
         end
@@ -246,10 +260,18 @@ conn = RunService.Heartbeat:Connect(function(deltaTime)
     for track in pairs(previousTrackSet) do
         if not currentTrackSet[track] then
             local old = lastStates[track]
-            if old then
-                add(string.format("[%06.3fs] LOST_TRACK %s", os.clock() - start, describe(old)))
+            if old and old.Kind ~= "IDLE_TRACK" then
+                add(string.format("[%06.3fs] LOST_TRACK %s", now - started, describe(old)))
             end
         end
     end
     previousTrackSet = currentTrackSet
+
+    if captureStarted and now - captureStarted >= 6 then
+        if sourceEverDetected and sourceDetectedThisSample then
+            finish("CAPTURE_COMPLETE_SOURCE_STILL_ACTIVE")
+        else
+            finish("CAPTURE_COMPLETE_SOURCE_ENDED_DURING_WINDOW")
+        end
+    end
 end)
