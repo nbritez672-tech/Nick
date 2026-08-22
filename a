@@ -1,0 +1,900 @@
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║  EVADE — EMOTES SELECCIONADOS                              ║
+-- ║  Reproduce emotes visuales específicos client-side.        ║
+-- ║  Compatible Delta Android. Sin remotes, sin HttpService.   ║
+-- ╚══════════════════════════════════════════════════════════════╝
+
+local Players  = game:GetService("Players")
+local RS       = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local lp       = Players.LocalPlayer
+
+-- ── EMOTES HARDCODEADOS (IDs verificados en runtime) ─────────
+-- animId   = ID de la animación R6 del emote
+-- soundId  = ID del sonido (si tiene), vacío si no
+-- emoteName = nombre en ItemPacks para encontrar los props
+local EMOTES = {
+    { label = "RockinStride",      animId = "rbxassetid://111570274714712", soundId = "rbxassetid://114846968069031", emoteName = "RockinStride" },
+    { label = "ZombieStride (1)",  animId = "rbxassetid://125497596837433", soundId = "",                            emoteName = "ZombieStride" },
+    { label = "ZombieStride (2)",  animId = "rbxassetid://84248734120911",  soundId = "",                            emoteName = "ZombieStride" },
+    { label = "ZombieStride (3)",  animId = "rbxassetid://73383479205643",  soundId = "",                            emoteName = "ZombieStride" },
+    { label = "GhoulishGalleon",   animId = "rbxassetid://119226805386886", soundId = "",                            emoteName = "GhoulishGalleon" },
+    { label = "Griddy",            animId = "rbxassetid://82579103193493",  soundId = "",                            emoteName = "Griddy"       },
+    { label = "BananaDance",       animId = "rbxassetid://76664554569994",  soundId = "",                            emoteName = "BananaDance"  },
+    { label = "OiiaOiia",          animId = "rbxassetid://82698079573413",  soundId = "",                            emoteName = "OiiaOiia"     },
+    { label = "Writhing",          animId = "rbxassetid://118337616190939", soundId = "",                            emoteName = "Writhing"     },
+    { label = "AstroSlide",        animId = "rbxassetid://103095884226031", soundId = "",                            emoteName = "AstroSlide"   },
+    { label = "Popular",           animId = "rbxassetid://126396646825215", soundId = "",                            emoteName = "Popular"      },
+    { label = "Moonwalk",          animId = "rbxassetid://97074392214454",  soundId = "",                            emoteName = "Moonwalk"     },
+    { label = "Golpeador",         animId = "",                             soundId = "",                            emoteName = "Golpeador"    },
+}
+
+-- IDs del idle/loop base del Rig — nunca sustituir estos
+local IDLE_IDS = {
+    ["rbxassetid://17418770762"] = true,
+    ["rbxassetid://17418484618"] = true,
+    ["rbxassetid://17418691532"] = true,
+    ["rbxassetid://17418712872"] = true,
+    ["rbxassetid://17418485963"] = true,
+    ["rbxassetid://17418788540"] = true,
+    ["rbxassetid://17418483149"] = true,
+    ["rbxassetid://17524391617"] = true,
+}
+
+-- ── ESTADO ────────────────────────────────────────────────────
+local State = {
+    enabled    = true,
+    emoteIdx   = nil,   -- índice del emote seleccionado en EMOTES
+}
+
+local activeVisualTrack = nil
+local activeVisualSession = nil
+local activeSourceTrack = nil
+local activeSourceStoppedConn = nil
+local activeSourceEnded = false
+local activeFakeAnims   = {}
+local emoteSessionId    = 0
+local lastVisualTimePos = nil
+local visualStallSince  = nil
+local activeProps       = {}
+local activeSound       = nil
+local activeSoundKillerConn = nil
+local substituting      = false
+local connections       = {}
+local inEvadeEmote      = false  -- true cuando el hook o el detector directo confirman un emote
+local originalSpeedChange = nil
+local speedHooked       = false
+local directTrackSeen   = {}
+local directSelectedIdx = nil
+local directNoActionSince = nil
+local directEmoteDetectorConnection = nil
+local directPollAccumulator = 0
+
+-- ── CACHE DE MÓDULOS EN ITEMPACKS ────────────────────────────
+-- Pre-cachear los ModuleScript de cada emote para no buscar en runtime
+local moduleCache = {}  -- [emoteName] = ModuleScript
+
+local function buildCache()
+    local packs = RS:FindFirstChild("Items") and RS.Items:FindFirstChild("ItemPacks")
+    if not packs then return end
+    for _, emote in ipairs(EMOTES) do
+        for _, inst in ipairs(packs:GetDescendants()) do
+            if inst.ClassName == "ModuleScript" and inst.Name == emote.emoteName then
+                moduleCache[emote.emoteName] = inst
+                break
+            end
+        end
+    end
+end
+
+-- ── WHITELIST: animId → idx en EMOTES ────────────────────────
+local whitelist = {}
+local function buildWhitelist()
+    for i, emote in ipairs(EMOTES) do
+        if emote.animId ~= "" then
+            whitelist[emote.animId] = i
+        end
+    end
+end
+
+-- ── LIMPIAR PROPS, SONIDO Y REFERENCIAS ACTIVAS ───────────────
+-- Si se recibe expectedSession y ya hay una sesión más nueva, la limpieza
+-- antigua se ignora para no destruir un visual recién creado.
+local function cleanupActive(expectedSession)
+    if expectedSession and expectedSession ~= emoteSessionId then
+        return false
+    end
+
+    if activeVisualTrack then
+        pcall(function() activeVisualTrack:Stop(0) end)
+        activeVisualTrack = nil
+    end
+    activeVisualSession = nil
+
+    if activeSourceStoppedConn then
+        pcall(function() activeSourceStoppedConn:Disconnect() end)
+        activeSourceStoppedConn = nil
+    end
+    activeSourceTrack = nil
+    activeSourceEnded = false
+
+    for session, fakeAnim in pairs(activeFakeAnims) do
+        pcall(function() fakeAnim:Destroy() end)
+        activeFakeAnims[session] = nil
+    end
+
+    for _, obj in ipairs(activeProps) do
+        pcall(function() obj:Destroy() end)
+    end
+    activeProps = {}
+
+    if activeSound then
+        pcall(function() activeSound:Stop(); activeSound:Destroy() end)
+        activeSound = nil
+    end
+
+    if activeSoundKillerConn then
+        pcall(function() activeSoundKillerConn:Disconnect() end)
+        activeSoundKillerConn = nil
+    end
+
+    lastVisualTimePos = nil
+    visualStallSince = nil
+    directNoActionSince = nil
+    return true
+end
+
+-- ── SPAWN DE PROPS 3D ─────────────────────────────────────────
+-- Clona todo el EmoteModel de CharacterClassic y redirige
+-- los Motor6D raíz al Rig real del jugador.
+-- GhoulishGalleon contiene un barco complejo con Hull, banderas,
+-- Lantern, Ship_VFX y joints internos por ruta.
+local function getRelativeInstancePath(inst, root)
+    if not inst or not root then return nil end
+
+    local ok, instFull = pcall(function() return inst:GetFullName() end)
+    local okRoot, rootFull = pcall(function() return root:GetFullName() end)
+    if not ok or not okRoot then return nil end
+
+    local prefix = rootFull .. "."
+    if instFull:sub(1, #prefix) ~= prefix then return nil end
+    return instFull:sub(#prefix + 1)
+end
+
+local function findGhoulishJointPart(part, sourceModel, clonedModel, rig)
+    if not part then return nil end
+    if clonedModel:IsAncestorOf(part) then return part end
+
+    local relativePath = getRelativeInstancePath(part, sourceModel)
+    if relativePath then
+        local clonePart = clonedModel
+        for segment in string.gmatch(relativePath, "[^%.]+") do
+            clonePart = clonePart:FindFirstChild(segment)
+            if not clonePart then break end
+        end
+        if clonePart and clonePart:IsA("BasePart") then
+            return clonePart
+        end
+    end
+
+    local rigPart = rig:FindFirstChild(part.Name, true)
+    if rigPart and not clonedModel:IsAncestorOf(rigPart) then
+        return rigPart
+    end
+
+    return part
+end
+
+-- Incremento adicional: bajar el barco 0.3 studs más
+-- para elevar un poco más al personaje respecto de la cubierta.
+-- Se conserva la posición frontal Z=3.
+local GHOULISH_ROOT_OFFSET = CFrame.new(0, -4.1, 3)
+
+local function spawnProps(emote, rig)
+    local mod = moduleCache[emote.emoteName]
+    if not mod then return end
+
+    local cc         = mod:FindFirstChild("CharacterClassic")
+    local emoteModel = cc and cc:FindFirstChild("EmoteModel")
+    if not emoteModel then return end
+
+    local clonedEM = emoteModel:Clone()
+    clonedEM.Parent = rig
+    table.insert(activeProps, clonedEM)
+
+    if emote.emoteName == "GhoulishGalleon" then
+        local rigRoot = rig:FindFirstChild("HumanoidRootPart", true)
+            or rig:FindFirstChild("Torso", true)
+        local rootMotor = nil
+        local hull = nil
+
+        -- El scan identificó el Motor6D raíz exacto:
+        -- EmoteModel.Hull, Part0=CharacterClassic.HumanoidRootPart,
+        -- Part1=EmoteModel.Hull.
+        for _, joint in ipairs(clonedEM:GetDescendants()) do
+            if joint:IsA("Motor6D")
+            and joint.Name == "Hull"
+            and joint.Parent == clonedEM then
+                rootMotor = joint
+            end
+            if joint:IsA("BasePart") and joint.Name == "Hull" then
+                hull = hull or joint
+            end
+        end
+
+        -- Los C0/C1 originales contienen el offset y la orientación
+        -- reales del emote. No usar PivotTo al pivot del template, porque
+        -- eso pierde la postura auténtica del barco.
+        local targetCFrame = hull and hull.CFrame or nil
+        if rootMotor and rigRoot then
+            local okC0, c0 = pcall(function() return rootMotor.C0 end)
+            local okC1, c1 = pcall(function() return rootMotor.C1 end)
+            if okC0 and okC1 and typeof(c0) == "CFrame" and typeof(c1) == "CFrame" then
+                targetCFrame = rigRoot.CFrame
+                    * GHOULISH_ROOT_OFFSET
+                    * c0
+                    * c1:Inverse()
+            end
+        end
+        if hull and targetCFrame then
+            pcall(function() hull.CFrame = targetCFrame end)
+        end
+
+        -- Rebindar todos los joints internos, pero no el Motor6D raíz:
+        -- ese joint se sustituye por una unión rígida con el offset real.
+        for _, joint in ipairs(clonedEM:GetDescendants()) do
+            if joint ~= rootMotor
+            and (joint:IsA("Motor6D") or joint:IsA("Weld")) then
+                joint.Part0 = findGhoulishJointPart(joint.Part0, emoteModel, clonedEM, rig)
+                joint.Part1 = findGhoulishJointPart(joint.Part1, emoteModel, clonedEM, rig)
+            end
+        end
+
+        if rootMotor then
+            rootMotor:Destroy()
+        end
+
+        if rigRoot and hull then
+            local follow = Instance.new("WeldConstraint")
+            follow.Name = "__YY_GhoulishFollow"
+            follow.Part0 = rigRoot
+            follow.Part1 = hull
+            follow.Parent = rigRoot
+            table.insert(activeProps, follow)
+        end
+        return
+    end
+
+    -- Mantener exactamente la lógica anterior para los demás emotes.
+    for _, motor in ipairs(clonedEM:GetDescendants()) do
+        if motor:IsA("Motor6D") then
+            local p0name = motor.Part0 and motor.Part0.Name
+            if p0name then
+                local rigPart = rig:FindFirstChild(p0name, true)
+                if rigPart and not clonedEM:IsAncestorOf(rigPart) then
+                    motor.Part0 = rigPart
+                end
+            end
+        end
+    end
+end
+
+-- ── SONIDO DEL EMOTE VISUAL ───────────────────────────────────
+local function playSound(emote, rig)
+    if emote.soundId == "" then return end
+    local snd = Instance.new("Sound")
+    snd.SoundId = emote.soundId
+    snd.Volume  = 0.5
+    snd.Looped  = false
+    snd.Parent  = rig
+    snd:Play()
+    activeSound = snd
+end
+
+-- ── RIG VISUAL Y LIMPIEZA DE SESIONES ─────────────────────────
+local function getVisualRigModel()
+    local rigs = workspace:FindFirstChild("Rigs")
+    return rigs and rigs:FindFirstChild(lp.Name)
+end
+
+local function invalidateAndCleanup()
+    emoteSessionId = emoteSessionId + 1
+    cleanupActive(emoteSessionId)
+    table.clear(directTrackSeen)
+    directSelectedIdx = State.emoteIdx
+    inEvadeEmote = false
+end
+
+-- ── HOOK PRINCIPAL ────────────────────────────────────────────
+-- preserveSource=true es usado únicamente por el detector directo de Solara.
+-- El source se oculta con peso 0, pero se conserva en activeSourceTrack para
+-- detectar su final aunque desaparezca de GetPlayingAnimationTracks().
+local function onAnimPlayed(anim, track, rig, preserveSource)
+    if not State.enabled or not State.emoteIdx then return end
+    if substituting then return end
+
+    rig = rig or getVisualRigModel()
+    local animation = track and track.Animation
+    local id = animation and animation.AnimationId
+    if not id then return end
+
+    -- Un idle no es final mientras el source rastreado siga reproduciéndose.
+    if IDLE_IDS[id] then
+        local sourceAlive = false
+        if activeSourceTrack then
+            local ok, playing = pcall(function() return activeSourceTrack.IsPlaying end)
+            sourceAlive = ok and playing == true
+        end
+        if sourceAlive and inEvadeEmote then return end
+        if activeVisualTrack then
+            local session = emoteSessionId
+            task.spawn(function() cleanupActive(session) end)
+        end
+        return
+    end
+
+    if not inEvadeEmote then return end
+
+    local emote = EMOTES[State.emoteIdx]
+    if not emote or emote.animId == "" then return end
+    if emote.animId == id then return end
+    if activeVisualTrack and activeSourceTrack == track then return end
+
+    substituting = true
+    emoteSessionId = emoteSessionId + 1
+    local mySession = emoteSessionId
+    cleanupActive(mySession)
+
+    activeSourceTrack = track
+    directSourceSuppressed = preserveSource == true
+    activeSourceEnded = false
+
+    if preserveSource then
+        -- Stopped es una señal adicional de finalización. No se usa
+        -- AnimationPlayed, por lo que sigue siendo compatible con Solara.
+        pcall(function()
+            activeSourceStoppedConn = track.Stopped:Connect(function()
+                if mySession == emoteSessionId then
+                    activeSourceEnded = true
+                end
+            end)
+        end)
+    end
+
+    -- Silenciar sonidos del emote real y destruir sus props del rig visual.
+    pcall(function()
+        if rig then
+            for _, snd in ipairs(rig:GetDescendants()) do
+                if snd:IsA("Sound") and snd.IsPlaying then snd:Stop() end
+            end
+            for _, obj in ipairs(rig:GetChildren()) do
+                if obj:IsA("Model") and obj ~= rig:FindFirstChildOfClass("Humanoid") then
+                    obj:Destroy()
+                end
+            end
+        end
+    end)
+
+    -- EmoteSound real: vive en workspace.Players.<n>.HumanoidRootPart.SoundPos.
+    pcall(function()
+        if activeSoundKillerConn then
+            activeSoundKillerConn:Disconnect()
+            activeSoundKillerConn = nil
+        end
+        local playersFolder = workspace:FindFirstChild("Players")
+        local charModel = playersFolder and playersFolder:FindFirstChild(lp.Name)
+        if charModel then
+            local hrp = charModel:FindFirstChild("HumanoidRootPart")
+            local soundPos = hrp and hrp:FindFirstChild("SoundPos")
+            if soundPos then
+                for _, snd in ipairs(soundPos:GetChildren()) do
+                    if snd:IsA("Sound") and snd.Name == "EmoteSound" then
+                        pcall(function() snd:Stop() end)
+                    end
+                end
+            end
+            activeSoundKillerConn = charModel.DescendantAdded:Connect(function(inst)
+                if inst:IsA("Sound") and inst.Name == "EmoteSound" then
+                    task.defer(function() pcall(function() inst:Stop() end) end)
+                end
+            end)
+        end
+    end)
+
+    if preserveSource then
+        -- No detenerlo ni bajarle el peso. El log demostró que AdjustWeight(0)
+        -- lo saca de GetPlayingAnimationTracks() y provoca un falso final.
+        -- Action4 del visual domina a Action3, mientras este source conserva
+        -- su señal de finalización real.
+    else
+        pcall(function() track:Stop(0) end)
+    end
+
+    -- Mantener el Animation con un Parent y una referencia fuerte durante toda
+    -- la sesión. Esto evita problemas de retención en ejecutores PC.
+    local fake = Instance.new("Animation")
+    fake.Name = "YY_VisualEmote_" .. tostring(mySession)
+    fake.AnimationId = emote.animId
+    fake.Parent = anim
+
+    local ok, visualTrack = pcall(function()
+        return anim:LoadAnimation(fake)
+    end)
+
+    if ok and visualTrack then
+        activeVisualTrack = visualTrack
+        activeVisualSession = mySession
+        activeFakeAnims[mySession] = fake
+
+        pcall(function()
+            visualTrack.Priority = Enum.AnimationPriority.Action4
+        end)
+        visualTrack.Looped = true
+        visualTrack:Play(0.05, 1, 1)
+        pcall(function()
+            visualTrack:AdjustWeight(1, 0)
+            visualTrack:AdjustSpeed(1)
+        end)
+
+        lastVisualTimePos = nil
+        visualStallSince = nil
+
+        pcall(function()
+            if rig then spawnProps(emote, rig) end
+        end)
+        pcall(function()
+            if rig then playSound(emote, rig) end
+        end)
+
+        -- No limpiar aquí: una detención inesperada se recupera mediante el
+        -- watchdog. cleanupActive decide el final real del emote.
+        visualTrack.Stopped:Connect(function()
+            if mySession == emoteSessionId then
+                warn("[YY PC] Visual detenido mientras la sesión sigue activa; el watchdog lo revisará")
+            end
+        end)
+    else
+        pcall(function() fake:Destroy() end)
+        activeFakeAnims[mySession] = nil
+        activeVisualTrack = nil
+        activeVisualSession = nil
+    end
+
+    task.defer(function() substituting = false end)
+end
+
+-- ── CONECTAR AL RIG ───────────────────────────────────────────
+-- ── HOOK DE SPEEDCHANGE — detecta inicio/fin de emote real ───
+local function findMovementStat()
+    local ok, gc = pcall(function() return getgc(true) end)
+    if not ok then return nil end
+    for i = 1, #gc do
+        local v = gc[i]
+        if type(v) == "table" then
+            local ok2, valid = pcall(function()
+                return rawget(v, "SpeedChange") and type(v.SpeedChange) == "function"
+            end)
+            if ok2 and valid then return v end
+        end
+    end
+    return nil
+end
+
+local function setupSpeedHook()
+    if speedHooked then return end
+    if not hookfunction then return end
+    local ms = findMovementStat()
+    if not ms then return end
+    inEvadeEmote = false
+    local ok = pcall(function()
+        originalSpeedChange = hookfunction(ms.SpeedChange, function(self, state, value)
+            if state == "Emote" then
+                if value ~= nil then
+                    -- Emote empieza
+                    inEvadeEmote = true
+                else
+                    -- Emote termina — parar visual, props y sonido
+                    inEvadeEmote = false
+                    task.spawn(invalidateAndCleanup)
+                end
+            end
+            return originalSpeedChange(self, state, value)
+        end)
+    end)
+    if ok then speedHooked = true end
+end
+
+local function connectRig(humAnim, acAnim)
+    for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
+    connections = {}
+    if humAnim then
+        connections[#connections+1] = humAnim.AnimationPlayed:Connect(function(track)
+            onAnimPlayed(humAnim, track, getVisualRigModel(), false)
+        end)
+    end
+    if acAnim then
+        connections[#connections+1] = acAnim.AnimationPlayed:Connect(function(track)
+            onAnimPlayed(acAnim, track, getVisualRigModel(), false)
+        end)
+    end
+end
+
+local function getRigAnimators()
+    local rigs = workspace:FindFirstChild("Rigs")
+    if not rigs then return nil, nil end
+    local rig = rigs:FindFirstChild(lp.Name)
+    if not rig then return nil, nil end
+    local hum     = rig:FindFirstChildOfClass("Humanoid")
+    local humAnim = hum and hum:FindFirstChildOfClass("Animator")
+    local ac      = rig:FindFirstChildOfClass("AnimationController")
+    local acAnim  = ac and ac:FindFirstChildOfClass("Animator")
+    return humAnim, acAnim
+end
+
+-- ── FALLBACK PC/SOLARA POR POLLING ────────────────────────────
+-- Solara no expone getgc/hookfunction/getconnections y AnimationPlayed puede
+-- no dispararse. El detector lee los tracks activos del rig visual cada 0.05s.
+local DIRECT_END_GRACE = 0.25
+local VISUAL_STALL_GRACE = 0.40
+
+local function isDirectSourceTrack(track, selectedEmote)
+    if not track then return false end
+    local animation = track.Animation
+    local id = animation and animation.AnimationId
+    if not id or IDLE_IDS[id] then return false end
+    if selectedEmote and selectedEmote.animId ~= "" and id == selectedEmote.animId then
+        return false
+    end
+    local priority = tostring(track.Priority)
+    if not string.find(priority, "Action", 1, true) then return false end
+    return track.IsPlaying == true
+end
+
+local function getDirectAnimators()
+    local rig = getVisualRigModel()
+    if not rig then return nil, nil, nil end
+    local humanoid = rig:FindFirstChildOfClass("Humanoid")
+    local humAnim = humanoid and humanoid:FindFirstChildOfClass("Animator")
+    local controller = rig:FindFirstChildOfClass("AnimationController")
+    local acAnim = controller and controller:FindFirstChildOfClass("Animator")
+    return rig, humAnim, acAnim
+end
+
+local function finalizeDirectSession()
+    emoteSessionId = emoteSessionId + 1
+    cleanupActive(emoteSessionId)
+    table.clear(directTrackSeen)
+    inEvadeEmote = false
+end
+
+local function watchdogVisualTrack(sourceAlive)
+    if not sourceAlive or not activeVisualTrack then return end
+    local track = activeVisualTrack
+    local okPlaying, isPlaying = pcall(function() return track.IsPlaying end)
+    local okTime, timePosition = pcall(function() return track.TimePosition end)
+    if not okPlaying or not okTime then return end
+
+    local moved = lastVisualTimePos == nil
+        or math.abs(timePosition - lastVisualTimePos) > 0.0001
+    if not isPlaying or not moved then
+        if not visualStallSince then
+            visualStallSince = os.clock()
+        elseif os.clock() - visualStallSince >= VISUAL_STALL_GRACE then
+            pcall(function()
+                track:Play(0.05, 1, 1)
+                track:AdjustWeight(1, 0)
+                track:AdjustSpeed(1)
+            end)
+            visualStallSince = nil
+        end
+    else
+        visualStallSince = nil
+    end
+    lastVisualTimePos = timePosition
+end
+
+local function pollDirectEmoteTracks()
+    if directSelectedIdx ~= State.emoteIdx then
+        table.clear(directTrackSeen)
+        directSelectedIdx = State.emoteIdx
+        if activeVisualTrack then finalizeDirectSession() end
+    end
+
+    -- Si Delta logró conectar SpeedChange, esa ruta controla el inicio y el
+    -- final. El polling solo mantiene el watchdog del visual y no intenta
+    -- interpretar la desaparición del source detenido por la ruta Delta.
+    if speedHooked then
+        if activeVisualTrack and inEvadeEmote then
+            watchdogVisualTrack(true)
+        end
+        return
+    end
+
+    if not State.enabled or not State.emoteIdx then
+        if activeVisualTrack or activeSourceTrack then
+            finalizeDirectSession()
+        else
+            inEvadeEmote = false
+        end
+        return
+    end
+
+    local rig, humAnim, acAnim = getDirectAnimators()
+    local targets = {humAnim, acAnim}
+    local activeTracks = {}
+    local sourcePresent = false
+    local selectedEmote = EMOTES[State.emoteIdx]
+
+    for _, animator in ipairs(targets) do
+        if animator then
+            local ok, tracks = pcall(function()
+                return animator:GetPlayingAnimationTracks()
+            end)
+            if ok and tracks then
+                for _, track in ipairs(tracks) do
+                    activeTracks[track] = true
+                    if isDirectSourceTrack(track, selectedEmote) then
+                        sourcePresent = true
+                        inEvadeEmote = true
+
+                        if not activeSourceTrack then
+                            activeSourceTrack = track
+                        end
+
+                        if not directTrackSeen[track] then
+                            -- Si el visual ya existe, este puede ser un track
+                            -- reemplazado por Evade: conservarlo como source
+                            -- sin crear un segundo visual.
+                            if activeVisualTrack then
+                                activeSourceTrack = track
+                                directTrackSeen[track] = true
+                            else
+                                local previousVisual = activeVisualTrack
+                                local callOk = pcall(function()
+                                    onAnimPlayed(animator, track, rig, true)
+                                end)
+                                local visualCreated = activeVisualTrack ~= previousVisual
+                                    and activeVisualTrack ~= nil
+                                if callOk and visualCreated then
+                                    directTrackSeen[track] = true
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- La referencia persistente permite comprobar el estado del source incluso
+    -- durante una transición en la que deje temporalmente la lista de tracks.
+    if not sourcePresent then
+        if activeSourceEnded then
+            sourcePresent = false
+        elseif activeSourceTrack then
+            local ok, playing = pcall(function() return activeSourceTrack.IsPlaying end)
+            sourcePresent = ok and playing == true
+        end
+    end
+
+    for track in pairs(directTrackSeen) do
+        if not activeTracks[track] and track ~= activeSourceTrack then
+            directTrackSeen[track] = nil
+        end
+    end
+
+    if sourcePresent then
+        inEvadeEmote = true
+        directNoActionSince = nil
+        watchdogVisualTrack(true)
+    elseif activeVisualTrack then
+        if not directNoActionSince then
+            directNoActionSince = os.clock()
+        elseif os.clock() - directNoActionSince >= DIRECT_END_GRACE then
+            finalizeDirectSession()
+        end
+    else
+        directNoActionSince = nil
+        inEvadeEmote = false
+    end
+end
+
+local function startDirectEmoteDetector()
+    if directEmoteDetectorConnection then return end
+    directEmoteDetectorConnection = RunService.Heartbeat:Connect(function(deltaTime)
+        directPollAccumulator = directPollAccumulator + deltaTime
+        if directPollAccumulator < 0.05 then return end
+        directPollAccumulator = 0
+        pcall(pollDirectEmoteTracks)
+    end)
+end
+
+-- ── GUI ───────────────────────────────────────────────────────
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = lp:WaitForChild("PlayerGui")
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 260, 0, 380)
+frame.Position = UDim2.new(0, 10, 0.5, -190)
+frame.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Parent = ScreenGui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
+
+-- Título
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -16, 0, 36)
+title.Position = UDim2.new(0, 8, 0, 8)
+title.BackgroundTransparency = 1
+title.Text = "EMOTES"
+title.Font = Enum.Font.GothamBlack
+title.TextSize = 14
+title.TextColor3 = Color3.fromRGB(220, 220, 240)
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = frame
+
+-- Toggle ON/OFF
+local togBtn = Instance.new("TextButton")
+togBtn.Size = UDim2.new(0, 56, 0, 26)
+togBtn.Position = UDim2.new(1, -64, 0, 13)
+togBtn.BackgroundColor3 = Color3.fromRGB(0, 185, 85)
+togBtn.BorderSizePixel = 0
+togBtn.Text = "ON"
+togBtn.Font = Enum.Font.GothamBlack
+togBtn.TextSize = 12
+togBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+togBtn.Parent = frame
+Instance.new("UICorner", togBtn).CornerRadius = UDim.new(0, 8)
+
+togBtn.MouseButton1Click:Connect(function()
+    State.enabled = not State.enabled
+    if State.enabled then
+        togBtn.BackgroundColor3 = Color3.fromRGB(0, 185, 85)
+        togBtn.Text = "ON"
+    else
+        togBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 70)
+        togBtn.Text = "OFF"
+        invalidateAndCleanup()
+    end
+end)
+
+-- Separador
+local sep = Instance.new("Frame")
+sep.Size = UDim2.new(1, -20, 0, 1)
+sep.Position = UDim2.new(0, 10, 0, 50)
+sep.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+sep.BorderSizePixel = 0
+sep.Parent = frame
+
+-- ScrollFrame con botones
+local scroll = Instance.new("ScrollingFrame")
+scroll.Size = UDim2.new(1, -16, 1, -62)
+scroll.Position = UDim2.new(0, 8, 0, 58)
+scroll.BackgroundTransparency = 1
+scroll.BorderSizePixel = 0
+scroll.ScrollBarThickness = 3
+scroll.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 120)
+scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+scroll.Parent = frame
+
+local layout = Instance.new("UIListLayout")
+layout.Padding = UDim.new(0, 5)
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Parent = scroll
+
+local padding = Instance.new("UIPadding")
+padding.PaddingTop = UDim.new(0, 4)
+padding.Parent = scroll
+
+local activeBtn = nil
+
+for i, emote in ipairs(EMOTES) do
+    if emote.animId ~= "" then  -- solo mostrar emotes con ID válido
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, -8, 0, 38)
+        btn.BackgroundColor3 = Color3.fromRGB(28, 28, 42)
+        btn.BorderSizePixel = 0
+        btn.Text = emote.label
+        btn.Font = Enum.Font.Gotham
+        btn.TextSize = 12
+        btn.TextColor3 = Color3.fromRGB(190, 190, 215)
+        btn.TextXAlignment = Enum.TextXAlignment.Left
+        btn.LayoutOrder = i
+        btn.Parent = scroll
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+
+        local btnPad = Instance.new("UIPadding")
+        btnPad.PaddingLeft = UDim.new(0, 12)
+        btnPad.Parent = btn
+
+        btn.MouseButton1Click:Connect(function()
+            if activeVisualTrack or activeSourceTrack then
+                invalidateAndCleanup()
+            end
+            if activeBtn and activeBtn ~= btn then
+                activeBtn.BackgroundColor3 = Color3.fromRGB(28, 28, 42)
+                activeBtn.TextColor3 = Color3.fromRGB(190, 190, 215)
+            end
+            if State.emoteIdx == i then
+                -- Deseleccionar
+                State.emoteIdx = nil
+                activeBtn = nil
+                btn.BackgroundColor3 = Color3.fromRGB(28, 28, 42)
+                btn.TextColor3 = Color3.fromRGB(190, 190, 215)
+                invalidateAndCleanup()
+            else
+                State.emoteIdx = i
+                activeBtn = btn
+                btn.BackgroundColor3 = Color3.fromRGB(34, 160, 80)
+                btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            end
+        end)
+    end
+end
+
+-- Drag
+local dragging, dragStart, startPos = false, nil, nil
+frame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch
+    or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = frame.Position
+    end
+end)
+frame.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch
+    or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = false
+    end
+end)
+game:GetService("UserInputService").InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.Touch
+    or input.UserInputType == Enum.UserInputType.MouseMove) then
+        local delta = input.Position - dragStart
+        frame.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+-- ── INICIALIZAR ───────────────────────────────────────────────
+buildCache()
+buildWhitelist()
+startDirectEmoteDetector()
+
+-- Hookear SpeedChange para detectar emote real en Delta cuando está disponible.
+-- En Solara el polling directo anterior funciona sin getgc ni hookfunction.
+task.spawn(function()
+    while not speedHooked do
+        pcall(setupSpeedHook)
+        task.wait(0.5)
+    end
+end)
+
+task.spawn(function()
+    local humAnim, acAnim = getRigAnimators()
+    if not humAnim and not acAnim then
+        local rigs = workspace:WaitForChild("Rigs", 10)
+        if not rigs then return end
+        local rig = rigs:WaitForChild(lp.Name, 10)
+        if not rig then return end
+        local hum = rig:WaitForChild("Humanoid", 5)
+        humAnim = hum and hum:WaitForChild("Animator", 5)
+        local ac = rig:WaitForChild("AnimationController", 5)
+        acAnim  = ac and ac:WaitForChild("Animator", 5)
+    end
+    pcall(connectRig, humAnim, acAnim)
+end)
+
+lp.CharacterAdded:Connect(function()
+    invalidateAndCleanup()
+    task.wait(1)
+    local humAnim, acAnim = getRigAnimators()
+    if humAnim or acAnim then pcall(connectRig, humAnim, acAnim) end
+end)
