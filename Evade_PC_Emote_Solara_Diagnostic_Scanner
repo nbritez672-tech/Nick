@@ -1,122 +1,255 @@
 --[[
-    YIN YANG — PC/SOLARA DIAGNOSTIC SCANNER (SOLO LECTURA)
-    No modifica nada. No usa getgc, hookfunction, getconnections
-    ni AnimationPlayed:Connect. Solo lee propiedades por polling.
+    YIN YANG — PC/SOLARA DIAGNOSTIC SCANNER V2 (SOLO LECTURA)
 
-    Ejecutar ESTO en paralelo mientras el emote real de Evade está
-    activo, durante 2-3 segundos. Copia el log al portapapeles y
-    lo guarda con writefile.
+    Esta versión no modifica tracks ni instancias. Observa el Humanoid.Animator
+    y, si existe, el AnimationController.Animator del rig visual. A diferencia
+    del scanner anterior, identifica el visual por AnimationId y no solamente
+    por Priority = Action4. Esto permite detectar el visual aunque Solara o
+    Evade no apliquen la prioridad esperada.
 
-    Qué busca:
-      - Si el fake Animation sigue existiendo/parenteado con el tiempo
-      - Si TimePosition del visual deja de avanzar (freeze real)
-      - Si Speed/WeightCurrent cambian solos (interferencia externa)
-      - Si aparecen tracks Action* nuevos no esperados (Evade re-syncing)
+    Ejecutar una sola vez mientras la librería de emotes ya esté cargada.
+    Después iniciar un emote y mantenerlo activo durante unos 5 segundos.
 ]]
 
 local Players = game:GetService("Players")
-local RS      = game:GetService("RunService")
-local lp      = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
 
-local IDLE_IDS = {
-    ["rbxassetid://17418770762"] = true, ["rbxassetid://17418484618"] = true,
-    ["rbxassetid://17418691532"] = true, ["rbxassetid://17418712872"] = true,
-    ["rbxassetid://17418485963"] = true, ["rbxassetid://17418788540"] = true,
-    ["rbxassetid://17418483149"] = true, ["rbxassetid://17524391617"] = true,
+local SOURCE_ID = "rbxassetid://113826325934853"
+local VISUAL_IDS = {
+    ["rbxassetid://111570274714712"] = true,
+    ["rbxassetid://125497596837433"] = true,
+    ["rbxassetid://84248734120911"] = true,
+    ["rbxassetid://73383479205643"] = true,
+    ["rbxassetid://119226805386886"] = true,
+    ["rbxassetid://82579103193493"] = true,
+    ["rbxassetid://76664554569994"] = true,
+    ["rbxassetid://82698079573413"] = true,
+    ["rbxassetid://118337616190939"] = true,
+    ["rbxassetid://103095884226031"] = true,
+    ["rbxassetid://126396646825215"] = true,
+    ["rbxassetid://97074392214454"] = true,
+    ["rbxassetid://113685905137377"] = true,
+    ["rbxassetid://89805417778763"] = true,
+    ["rbxassetid://112692937680187"] = true,
+    ["rbxassetid://89755710041366"] = true,
 }
 
+local IDLE_IDS = {
+    ["rbxassetid://17418770762"] = true,
+    ["rbxassetid://17418484618"] = true,
+    ["rbxassetid://17418691532"] = true,
+    ["rbxassetid://17418712872"] = true,
+    ["rbxassetid://17418485963"] = true,
+    ["rbxassetid://17418788540"] = true,
+    ["rbxassetid://17418483149"] = true,
+    ["rbxassetid://17524391617"] = true,
+}
+
+local function safeFullName(instance)
+    local ok, value = pcall(function()
+        return instance and instance:GetFullName()
+    end)
+    return ok and value or "<unavailable>"
+end
+
+local function safeValue(callback, fallback)
+    local ok, value = pcall(callback)
+    if ok then return value end
+    return fallback
+end
+
+local function getVisualRig()
+    local rigs = workspace:FindFirstChild("Rigs")
+    return rigs and rigs:FindFirstChild(LocalPlayer.Name)
+end
+
+local function getAnimators(rig)
+    local result = {}
+    local seen = {}
+    local humanoid = rig and rig:FindFirstChildOfClass("Humanoid")
+    local humAnimator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+    if humAnimator then
+        result[#result + 1] = humAnimator
+        seen[humAnimator] = true
+    end
+
+    local controller = rig and rig:FindFirstChildOfClass("AnimationController")
+    local controllerAnimator = controller and controller:FindFirstChildOfClass("Animator")
+    if controllerAnimator and not seen[controllerAnimator] then
+        result[#result + 1] = controllerAnimator
+    end
+    return result
+end
+
+local function classify(id, priority)
+    if id == SOURCE_ID then return "SOURCE_TRACK" end
+    if VISUAL_IDS[id] then return "VISUAL_TRACK" end
+    if IDLE_IDS[id] then return "IDLE_TRACK" end
+    if string.find(priority, "Action", 1, true) then return "OTHER_ACTION_TRACK" end
+    return "OTHER_TRACK"
+end
+
+local function snapshot(track, animator)
+    local animation = safeValue(function() return track.Animation end, nil)
+    local id = safeValue(function() return animation and animation.AnimationId end, "nil")
+    local priority = tostring(safeValue(function() return track.Priority end, "unknown"))
+    local kind = classify(id, priority)
+    return {
+        Track = track,
+        Animator = safeFullName(animator),
+        Kind = kind,
+        Id = id,
+        IsPlaying = safeValue(function() return track.IsPlaying end, "error"),
+        Speed = safeValue(function() return track.Speed end, "error"),
+        TimePosition = safeValue(function() return track.TimePosition end, "error"),
+        Length = safeValue(function() return track.Length end, "error"),
+        WeightCurrent = safeValue(function() return track.WeightCurrent end, "error"),
+        WeightTarget = safeValue(function() return track.WeightTarget end, "unavailable"),
+        Priority = priority,
+        Looped = safeValue(function() return track.Looped end, "error"),
+        IsAnimationParented = animation ~= nil and safeValue(function() return animation.Parent ~= nil end, false),
+        AnimationParent = safeValue(function() return animation and animation.Parent and animation.Parent:GetFullName() end, "nil"),
+    }
+end
+
+local function formatNumber(value)
+    if type(value) == "number" then
+        return string.format("%.4f", value)
+    end
+    return tostring(value)
+end
+
+local function describe(state)
+    return "kind=" .. state.Kind
+        .. " id=" .. tostring(state.Id)
+        .. " playing=" .. tostring(state.IsPlaying)
+        .. " speed=" .. formatNumber(state.Speed)
+        .. " time=" .. formatNumber(state.TimePosition)
+        .. " length=" .. formatNumber(state.Length)
+        .. " weight=" .. formatNumber(state.WeightCurrent)
+        .. " targetWeight=" .. tostring(state.WeightTarget)
+        .. " prio=" .. tostring(state.Priority)
+        .. " looped=" .. tostring(state.Looped)
+        .. " animParented=" .. tostring(state.IsAnimationParented)
+        .. " animParent=" .. tostring(state.AnimationParent)
+        .. " animator=" .. tostring(state.Animator)
+end
+
 local log = {}
-local start = os.clock()
-local function ts() return string.format("[%06.3fs]", os.clock() - start) end
-local function add(s) log[#log+1] = s end
+local function add(text)
+    log[#log + 1] = text
+end
 
-local rig = workspace:FindFirstChild("Rigs") and workspace.Rigs:FindFirstChild(lp.Name)
-local hum = rig and rig:FindFirstChildOfClass("Humanoid")
-local animator = hum and hum:FindFirstChildOfClass("Animator")
-
-if not animator then
-    add("ERROR: no se encontró Humanoid.Animator en el Rig visual")
-    setclipboard(table.concat(log, "\n"))
+local rig = getVisualRig()
+if not rig then
+    add("ERROR: no se encontró Workspace.Rigs." .. LocalPlayer.Name)
+    local result = table.concat(log, "\n")
+    pcall(function() writefile("yy_pc_diag_scan_v2.txt", result) end)
+    pcall(function() setclipboard(result) end)
     return
 end
 
-add("=== PC/SOLARA DIAG SCANNER ===")
-add("Rig: " .. rig:GetFullName())
-add("Animator: " .. animator:GetFullName())
-add("")
-
--- Estado previo para detectar cambios, por track (usamos el objeto como key)
-local lastState = {}
-
-local function classify(track)
-    local id = track.Animation and track.Animation.AnimationId
-    if not id then return "UNKNOWN" end
-    if IDLE_IDS[id] then return "IDLE_TRACK" end
-    local pr = tostring(track.Priority)
-    if pr:find("Action4") then return "VISUAL_TRACK_CANDIDATE" end -- nuestro visual usa Action4
-    if pr:find("Action") then return "SOURCE_TRACK_CANDIDATE" end  -- el emote real suele ser Action3
-    return "OTHER"
+local animators = getAnimators(rig)
+if #animators == 0 then
+    add("ERROR: no se encontró ningún Animator en " .. safeFullName(rig))
+    local result = table.concat(log, "\n")
+    pcall(function() writefile("yy_pc_diag_scan_v2.txt", result) end)
+    pcall(function() setclipboard(result) end)
+    return
 end
 
-local elapsed = 0
+add("=== PC/SOLARA DIAG SCANNER V2 ===")
+add("Rig: " .. safeFullName(rig))
+for _, animator in ipairs(animators) do
+    add("Animator: " .. safeFullName(animator))
+end
+add("SOURCE_ID=" .. SOURCE_ID)
+add("VISUAL_IDS=identified by AnimationId")
+add("")
+
+local start = os.clock()
+local sampleAccumulator = 0
+local lastStates = {}
+local previousTrackSet = {}
 local conn
-conn = RS.Heartbeat:Connect(function(dt)
-    elapsed = elapsed + dt
-    if elapsed > 3 then
+
+local function finish()
+    if conn then
         conn:Disconnect()
-        add("")
-        add("=== FIN DEL SCAN (3s) ===")
-        local full = table.concat(log, "\n")
-        pcall(writefile, "yy_pc_diag_scan.txt", full)
-        pcall(setclipboard, full)
-        print("[DIAG] Guardado y copiado. Líneas: " .. #log)
+        conn = nil
+    end
+    add("")
+    add("=== FIN DEL SCAN V2 (5s) ===")
+    local result = table.concat(log, "\n")
+    pcall(function() writefile("yy_pc_diag_scan_v2.txt", result) end)
+    pcall(function() setclipboard(result) end)
+    print("[DIAG V2] Guardado y copiado. Líneas: " .. tostring(#log))
+end
+
+conn = RunService.Heartbeat:Connect(function(deltaTime)
+    if os.clock() - start >= 5 then
+        finish()
         return
     end
 
-    local ok, tracks = pcall(function() return animator:GetPlayingAnimationTracks() end)
-    if not ok then return end
+    sampleAccumulator = sampleAccumulator + deltaTime
+    if sampleAccumulator < 0.05 then return end
+    sampleAccumulator = 0
 
-    for _, track in ipairs(tracks) do
-        local kind = classify(track)
-        local id = track.Animation and track.Animation.AnimationId or "nil"
-        local animObj = track.Animation
-        local animParented = animObj and animObj.Parent ~= nil
+    local currentTrackSet = {}
+    for _, animator in ipairs(animators) do
+        local ok, tracks = pcall(function()
+            return animator:GetPlayingAnimationTracks()
+        end)
+        if ok and tracks then
+            for _, track in ipairs(tracks) do
+                currentTrackSet[track] = true
+                local state = snapshot(track, animator)
+                local previous = lastStates[track]
 
-        local snapshot = {
-            IsPlaying = track.IsPlaying,
-            Speed     = track.Speed,
-            TimePos   = track.TimePosition,
-            Weight    = track.WeightCurrent,
-            Priority  = tostring(track.Priority),
-            Looped    = track.Looped,
-        }
-
-        local prev = lastState[track]
-        local changed = {}
-        if prev then
-            for k, v in pairs(snapshot) do
-                if prev[k] ~= v then
-                    table.insert(changed, k .. ":" .. tostring(prev[k]) .. "->" .. tostring(v))
+                if not previous then
+                    add(string.format("[%06.3fs] NEW_TRACK %s", os.clock() - start, describe(state)))
+                else
+                    local changes = {}
+                    if previous.IsPlaying ~= state.IsPlaying then
+                        changes[#changes + 1] = "IsPlaying=" .. tostring(previous.IsPlaying) .. "->" .. tostring(state.IsPlaying)
+                    end
+                    if previous.Speed ~= state.Speed then
+                        changes[#changes + 1] = "Speed=" .. tostring(previous.Speed) .. "->" .. tostring(state.Speed)
+                    end
+                    if previous.WeightCurrent ~= state.WeightCurrent then
+                        changes[#changes + 1] = "Weight=" .. tostring(previous.WeightCurrent) .. "->" .. tostring(state.WeightCurrent)
+                    end
+                    if previous.Priority ~= state.Priority then
+                        changes[#changes + 1] = "Priority=" .. tostring(previous.Priority) .. "->" .. tostring(state.Priority)
+                    end
+                    if previous.Looped ~= state.Looped then
+                        changes[#changes + 1] = "Looped=" .. tostring(previous.Looped) .. "->" .. tostring(state.Looped)
+                    end
+                    if previous.TimePosition ~= state.TimePosition then
+                        changes[#changes + 1] = "TimePosition=" .. tostring(previous.TimePosition) .. "->" .. tostring(state.TimePosition)
+                    end
+                    if previous.IsAnimationParented ~= state.IsAnimationParented then
+                        changes[#changes + 1] = "AnimationParented=" .. tostring(previous.IsAnimationParented) .. "->" .. tostring(state.IsAnimationParented)
+                    end
+                    if #changes > 0 and state.Kind ~= "IDLE_TRACK" then
+                        add(string.format("[%06.3fs] CHANGE %s | %s", os.clock() - start, tostring(state.Track), table.concat(changes, ", ")))
+                    end
                 end
+
+                lastStates[track] = state
             end
         end
-
-        if kind ~= "IDLE_TRACK" then
-            add(ts() .. " " .. kind
-                .. " id=" .. id
-                .. " playing=" .. tostring(snapshot.IsPlaying)
-                .. " speed=" .. tostring(snapshot.Speed)
-                .. " time=" .. string.format("%.2f", snapshot.TimePos)
-                .. " weight=" .. string.format("%.2f", snapshot.Weight)
-                .. " prio=" .. snapshot.Priority
-                .. " looped=" .. tostring(snapshot.Looped)
-                .. " animParented=" .. tostring(animParented))
-
-            if #changed > 0 then
-                add("    CHANGED: " .. table.concat(changed, ", "))
-            end
-        end
-
-        lastState[track] = snapshot
     end
+
+    for track in pairs(previousTrackSet) do
+        if not currentTrackSet[track] then
+            local old = lastStates[track]
+            if old then
+                add(string.format("[%06.3fs] LOST_TRACK %s", os.clock() - start, describe(old)))
+            end
+        end
+    end
+    previousTrackSet = currentTrackSet
 end)
