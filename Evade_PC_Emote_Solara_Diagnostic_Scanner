@@ -2634,6 +2634,7 @@ local emoteLifecycleConnections = {}
 local roundCleanupConnections = {}
 local inEvadeEmote      = false  -- true cuando Evade está en estado "Emote" real o el detector PC confirma un Action track
 local directTrackSeen   = {}
+local directTrackAttemptWarnings = {}
 local directSelectedIdx = nil
 local directNoActionSince = nil
 local directPreserveSourceTrack = false
@@ -2695,6 +2696,7 @@ local function resetEmoteRuntime()
     inEvadeEmote = false
     substituting = false
     table.clear(directTrackSeen)
+    table.clear(directTrackAttemptWarnings)
     directSelectedIdx = nil
     directNoActionSince = nil
     directPreserveSourceTrack = false
@@ -2970,7 +2972,11 @@ local function onEmoteAnimPlayed(anim, track)
         end
     end)
 
-    if not directPreserveSourceTrack then
+    if directPreserveSourceTrack then
+        -- Solara no necesita detener el track fuente: lo dejamos vivo con peso 0
+        -- para que el detector pueda saber cuándo Evade termina el emote real.
+        pcall(function() track:AdjustWeight(0, 0.05) end)
+    else
         pcall(function() track:Stop(0) end)
     end
 
@@ -3068,6 +3074,7 @@ end
 local function pollDirectEmoteTracks()
     if directSelectedIdx ~= EmoteState.emoteIdx then
         table.clear(directTrackSeen)
+        table.clear(directTrackAttemptWarnings)
         directSelectedIdx = EmoteState.emoteIdx
     end
 
@@ -3103,13 +3110,26 @@ local function pollDirectEmoteTracks()
                         if id ~= (EMOTES[EmoteState.emoteIdx] and EMOTES[EmoteState.emoteIdx].animId) then
                             hasRealActionTrack = true
                             if not directTrackSeen[track] then
-                                directTrackSeen[track] = true
                                 inEvadeEmote = true
-                                pcall(function()
+                                local previousVisualTrack = activeVisualTrack
+                                local selectedEmote = EMOTES[EmoteState.emoteIdx]
+                                local callOk = pcall(function()
                                     directPreserveSourceTrack = true
                                     onEmoteAnimPlayed(animator, track)
                                 end)
                                 directPreserveSourceTrack = false
+
+                                local visualCreated = activeVisualTrack ~= previousVisualTrack and activeVisualTrack ~= nil
+                                local alreadyCorrect = selectedEmote and selectedEmote.animId == id
+                                if callOk and (visualCreated or alreadyCorrect) then
+                                    directTrackSeen[track] = true
+                                else
+                                    directTrackSeen[track] = nil
+                                    if not directTrackAttemptWarnings[track] then
+                                        directTrackAttemptWarnings[track] = true
+                                        warn("[Emote PC fallback] Visual replacement attempt did not create a track; retrying")
+                                    end
+                                end
                             end
                         end
                     end
