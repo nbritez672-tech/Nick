@@ -2994,9 +2994,11 @@ local function onEmoteAnimPlayed(anim, track)
         pcall(function()
             visualTrack.Priority = Enum.AnimationPriority.Action4
         end)
-        if emote.emoteName == "GhoulishGalleon" then
-            visualTrack.Looped = true
-        end
+        -- El emote real de Evade permanece activo hasta que el jugador lo
+        -- desactiva; los tracks visuales también deben repetir su ciclo.
+        -- Sin esto, algunos assets terminan a los ~0.5 s y dejan una pose
+        -- congelada aunque la detección del emote siga activa.
+        visualTrack.Looped = true
         -- No depender de los valores por defecto de Play en Solara: fija
         -- fade, weight y speed para evitar que el track nazca pausado.
         visualTrack:Play(0.05, 1, 1)
