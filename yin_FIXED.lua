@@ -853,7 +853,7 @@ local ThemePalettes = {
         ToggleOn = Color3.fromRGB(52, 199, 89),
     },
     Dark = {
-        Background = Color3.fromRGB(24, 24, 27),
+        Background = Color3.fromRGB(0, 0, 0),
         Secondary = Color3.fromRGB(40, 40, 45),
         AccentOff = Color3.fromRGB(58, 58, 64),
         Text = Color3.fromRGB(240, 240, 240),
@@ -1969,6 +1969,13 @@ local function swapThemeColor(obj, palette)
         end
     end
 
+    local textStrokeRole = obj:GetAttribute("ThemeTextStrokeRole")
+    if textStrokeRole and palette[textStrokeRole] then
+        if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+            pcall(function() obj.TextStrokeColor3 = palette[textStrokeRole] end)
+        end
+    end
+
     -- ThemeImageRole -> recolorea iconos transparentes según el tema activo.
     local imageRole = obj:GetAttribute("ThemeImageRole")
     if imageRole and palette[imageRole] then
@@ -1986,6 +1993,7 @@ local function setActiveTheme(name)
     if not palette then return false end
     Theme = table.clone(palette)
     Theme.AccentText = getContrastColor(Theme.Accent)
+    Theme.TextStroke = getContrastColor(Theme.Text)
     return true
 end
 
@@ -3602,8 +3610,8 @@ function YinYang:CreateWindow(title_text, startTheme)
     --// Campo de Window (no local suelto): mismo motivo que arriba.
     Window.ApplyFloatingStyle = function()
         local isCircleStyle = (SavedConfig.FloatingToggleStyle or "Pill") == "Circle"
-        local floatW = isCircleStyle and 84 or 200
-        local floatH = isCircleStyle and 84 or 36
+        local floatW = isCircleStyle and 76 or 200
+        local floatH = isCircleStyle and 76 or 36
 
         for _, floatData in ipairs(Window.FloatingToggles or {}) do
             local win = floatData and floatData.Window
@@ -3648,7 +3656,7 @@ function YinYang:CreateWindow(title_text, startTheme)
                 if label then
                     label.Size = isCircleStyle and UDim2.new(1, -24, 1, -24) or UDim2.new(1, -24, 1, 0)
                     label.Position = isCircleStyle and UDim2.new(0, 12, 0, 12) or UDim2.new(0, 12, 0, 0)
-                    label.TextSize = isCircleStyle and 13 or 21
+                    label.TextSize = isCircleStyle and 12 or 21
                     label.TextWrapped = isCircleStyle
                     label.TextTruncate = isCircleStyle and Enum.TextTruncate.None or Enum.TextTruncate.AtEnd
                 end
@@ -4072,8 +4080,8 @@ function YinYang:CreateWindow(title_text, startTheme)
                 --// Estilo elegido en Ajustes: "Pill" (actual) o "Circle" (nuevo, redondo)
                 local floatStyle    = SavedConfig.FloatingToggleStyle or "Pill"
                 local isCircleStyle = (floatStyle == "Circle")
-                local floatW = isCircleStyle and 84 or 200
-                local floatH = isCircleStyle and 84 or 36
+                local floatW = isCircleStyle and 76 or 200
+                local floatH = isCircleStyle and 76 or 36
 
                 --// GLOW EXTERIOR - invisible, solo para sincronía de posición
                 FloatingGlow = mk("Frame", {
@@ -4095,6 +4103,8 @@ function YinYang:CreateWindow(title_text, startTheme)
                     BackgroundColor3 = isCircleStyle and Color3.fromRGB(20, 20, 26) or Theme.Secondary,
                     BackgroundTransparency = isCircleStyle and 0.55 or 0.30,
                     BorderSizePixel = 0,
+                    Active = true,
+                    Selectable = false,
                     ZIndex = 4
                 })
                 FloatingWindow:SetAttribute("ThemeRole", "Secondary")
@@ -4131,7 +4141,7 @@ function YinYang:CreateWindow(title_text, startTheme)
                     Text = displayText,
                     TextColor3 = Theme.Text,
                     Font = Enum.Font.GothamBlack,
-                    TextSize = isCircleStyle and 13 or 21,
+                    TextSize = isCircleStyle and 12 or 21,
                     TextWrapped = isCircleStyle,
                     TextXAlignment = Enum.TextXAlignment.Center,
                     TextYAlignment = Enum.TextYAlignment.Center,
@@ -4154,12 +4164,20 @@ function YinYang:CreateWindow(title_text, startTheme)
                 end
                 updateFloatVisual()
 
+                --// Declaradas antes de los callbacks para que clic y arrastre compartan los mismos upvalues.
+                local dragging = false
+                local dragStart, startPos
+                local dragMoved = false
+
                 --// ÁREA CLICKEABLE — toda la pill
                 local FloatClick = mk("TextButton", {
                     Parent = FloatingWindow,
                     Size = UDim2.new(1, 0, 1, 0),
                     BackgroundTransparency = 1,
                     Text = "",
+                    AutoButtonColor = false,
+                    Active = true,
+                    Selectable = false,
                     ZIndex = 6
                 })
 
@@ -4186,10 +4204,6 @@ function YinYang:CreateWindow(title_text, startTheme)
                 --// ═════════════════════════════════════════════════════════════════════
                 --// DRAG — conectado a FloatClick para recibir input correctamente
                 --// ═════════════════════════════════════════════════════════════════════
-
-                local dragging = false
-                local dragStart, startPos
-                local dragMoved = false
 
                 --// Mantiene la ventana dentro del viewport en resoluciones y orientaciones distintas.
                 --// Usa la escala original de Position para no romper el posicionamiento existente.
@@ -4533,8 +4547,11 @@ function YinYang:CreateWindow(title_text, startTheme)
                 BackgroundTransparency = 0.3,
                 BorderSizePixel = 0,
                 ZIndex = 150,
-                CanQuery = true
+                CanQuery = true,
+                Active = true,
+                Selectable = false,
             }, Window.ScreenGui)
+            FloatingWindow:SetAttribute("ThemeRole", "Secondary")
             
             --// ESQUINAS REDONDEADAS
             corner(FloatingWindow, 999)
@@ -4573,13 +4590,14 @@ function YinYang:CreateWindow(title_text, startTheme)
                 Position = UDim2.new(0.65, 0, 0, 0),
                 BackgroundTransparency = 1,
                 Text = state and "ON" or "OFF",
-                TextColor3 = state and Color3.fromRGB(76, 175, 80) or Color3.fromRGB(155, 155, 155),
+                TextColor3 = state and Theme.ToggleOn or Theme.TextDim,
                 Font = Enum.Font.GothamBold,
                 TextSize = 14,
                 TextXAlignment = Enum.TextXAlignment.Right,
                 TextYAlignment = Enum.TextYAlignment.Center,
                 ZIndex = 151
             }, TextContainer)
+            StateLabel:SetAttribute("ThemeTextRole", state and "ToggleOn" or "TextDim")
             
             --// EFECTO SHIMMER (UIGradient)
             local shimmerGradient = Instance.new("UIGradient")
@@ -4617,6 +4635,9 @@ function YinYang:CreateWindow(title_text, startTheme)
                 Size = UDim2.new(1, 0, 1, 0),
                 BackgroundTransparency = 1,
                 Text = "",
+                AutoButtonColor = false,
+                Active = true,
+                Selectable = false,
                 ZIndex = 152
             }, FloatingWindow)
             
@@ -4625,16 +4646,43 @@ function YinYang:CreateWindow(title_text, startTheme)
             local dragStart = nil
             local dragStartPos = nil
             local isHovering = false
+
+            --// Mantener la cápsula visible en resoluciones y orientaciones distintas.
+            local function clampSimpleFloatingWindow()
+                if not FloatingWindow or not FloatingWindow.Parent then return end
+                local viewport = Window.ScreenGui.AbsoluteSize
+                local windowSize = FloatingWindow.AbsoluteSize
+                if viewport.X <= 0 or viewport.Y <= 0 or windowSize.X <= 0 or windowSize.Y <= 0 then return end
+
+                local margin = 8
+                local pos = FloatingWindow.Position
+                local minX = margin - pos.X.Scale * viewport.X
+                local maxX = viewport.X - windowSize.X - margin - pos.X.Scale * viewport.X
+                local minY = margin - pos.Y.Scale * viewport.Y
+                local maxY = viewport.Y - windowSize.Y - margin - pos.Y.Scale * viewport.Y
+                local x = maxX < minX and ((viewport.X - windowSize.X) / 2) - pos.X.Scale * viewport.X
+                    or math.clamp(pos.X.Offset, minX, maxX)
+                local y = maxY < minY and ((viewport.Y - windowSize.Y) / 2) - pos.Y.Scale * viewport.Y
+                    or math.clamp(pos.Y.Offset, minY, maxY)
+
+                if x ~= pos.X.Offset or y ~= pos.Y.Offset then
+                    FloatingWindow.Position = UDim2.new(pos.X.Scale, x, pos.Y.Scale, y)
+                end
+            end
+            clampSimpleFloatingWindow()
+            track(FloatingWindow:GetPropertyChangedSignal("Size"):Connect(clampSimpleFloatingWindow))
+            track(Window.ScreenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(clampSimpleFloatingWindow))
             
             --// FUNCIÓN PARA ACTUALIZAR ESTADO
             local function updateState()
                 if state then
                     StateLabel.Text = "ON"
-                    StateLabel.TextColor3 = Color3.fromRGB(76, 175, 80)
+                    StateLabel.TextColor3 = Theme.ToggleOn
                 else
                     StateLabel.Text = "OFF"
-                    StateLabel.TextColor3 = Color3.fromRGB(155, 155, 155)
+                    StateLabel.TextColor3 = Theme.TextDim
                 end
+                StateLabel:SetAttribute("ThemeTextRole", state and "ToggleOn" or "TextDim")
             end
             
             --// HOVER EFFECT
@@ -4690,8 +4738,8 @@ function YinYang:CreateWindow(title_text, startTheme)
             end))
             
             --// DRAG AND DROP
-            track(FloatingWindow.InputBegan:Connect(function(input)
-                if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and isHovering then
+            track(ClickDetector.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                     isDragging = true
                     dragStart = input.Position
                     dragStartPos = FloatingWindow.Position
@@ -4701,12 +4749,13 @@ function YinYang:CreateWindow(title_text, startTheme)
             track(UserInputService.InputChanged:Connect(function(input)
                 if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
                     local delta = input.Position - dragStart
-                    FloatingWindow.Position = UDim2.new(
-                        dragStartPos.X.Scale,
-                        dragStartPos.X.Offset + delta.X,
-                        dragStartPos.Y.Scale,
-                        dragStartPos.Y.Offset + delta.Y
-                    )
+                        FloatingWindow.Position = UDim2.new(
+                            dragStartPos.X.Scale,
+                            dragStartPos.X.Offset + delta.X,
+                            dragStartPos.Y.Scale,
+                            dragStartPos.Y.Offset + delta.Y
+                        )
+                        clampSimpleFloatingWindow()
                 end
             end))
             
@@ -4964,6 +5013,8 @@ function YinYang:CreateWindow(title_text, startTheme)
                     BackgroundColor3 = Theme.Secondary,
                     BackgroundTransparency = 0.30,
                     BorderSizePixel = 0,
+                    Active = true,
+                    Selectable = false,
                     ZIndex  = 4
                 })
                 FloatingWindow:SetAttribute("ThemeRole", "Secondary")
@@ -5031,7 +5082,10 @@ function YinYang:CreateWindow(title_text, startTheme)
                     Parent   = FloatingWindow,
                     Size     = UDim2.new(1, 0, 1, 0),
                     BackgroundTransparency = 1,
-                    Text     = "",
+                    Text = "",
+                    AutoButtonColor = false,
+                    Active = true,
+                    Selectable = false,
                     ZIndex   = 6
                 })
 
@@ -12032,8 +12086,10 @@ end
             LayoutOrder          = order or 1,
         })
         corner(card, 10)
-        stroke(card, isSel and Theme.Accent or Theme.Stroke, 1.5, isSel and 0 or 0.4)
+        local cardStroke = stroke(card, isSel and Theme.Accent or Theme.Stroke, 1.5, isSel and 0 or 0.4)
         card:SetAttribute("IconName", iconName)
+        card:SetAttribute("ThemeRole", isSel and "Accent" or "Secondary")
+        cardStroke:SetAttribute("ThemeRole", isSel and "Accent" or "Stroke")
 
         --// Preview: primera capa del ícono
         local firstLayer = iconData.Layers and iconData.Layers[1]
@@ -12044,6 +12100,7 @@ end
                 Position             = UDim2.new(0.5, -24, 0, 8),
                 BackgroundTransparency = 1,
                 Image                = firstLayer.Image,
+                ScaleType            = Enum.ScaleType.Fit,
                 ZIndex               = 14,
             })
         end
@@ -12052,18 +12109,23 @@ end
         local labelText = GetText(iconData.LabelES or iconName, iconData.LabelEN or iconData.LabelES or iconName)
         local nameLbl = mk("TextLabel", {
             Parent               = card,
-            Size                 = UDim2.new(1, -6, 0, 16),
-            Position             = UDim2.new(0, 3, 1, -20),
+            Size                 = UDim2.new(1, -8, 0, 28),
+            Position             = UDim2.new(0, 4, 1, -32),
             BackgroundTransparency = 1,
             Text                 = labelText,
             TextColor3           = isSel and Theme.AccentText or Theme.Text,
-            TextSize             = 10,
-            Font                 = Enum.Font.Gotham,
+            TextSize             = 11,
+            Font                 = Enum.Font.GothamBold,
             TextXAlignment       = Enum.TextXAlignment.Center,
-            TextTruncate         = Enum.TextTruncate.AtEnd,
+            TextYAlignment       = Enum.TextYAlignment.Center,
+            TextWrapped           = true,
+            TextTruncate         = Enum.TextTruncate.None,
+            TextStrokeColor3      = isSel and Theme.Background or Theme.TextStroke,
+            TextStrokeTransparency = 0.35,
             ZIndex               = 14,
         })
         nameLbl:SetAttribute("ThemeTextRole", isSel and "AccentText" or "Text")
+        nameLbl:SetAttribute("ThemeTextStrokeRole", isSel and "Background" or "TextStroke")
 
         --// Botón invisible encima para capturar el click
         local btn = mk("TextButton", {
@@ -12085,15 +12147,19 @@ end
                 local chSel = (ch:GetAttribute("IconName") == iconName)
                 ch.BackgroundColor3        = chSel and Theme.Accent or Theme.Secondary
                 ch.BackgroundTransparency  = chSel and 0 or 0.4
+                ch:SetAttribute("ThemeRole", chSel and "Accent" or "Secondary")
                 local s = ch:FindFirstChildOfClass("UIStroke")
                 if s then
                     s.Color           = chSel and Theme.Accent or Theme.Stroke
                     s.Transparency    = chSel and 0 or 0.4
+                    s:SetAttribute("ThemeRole", chSel and "Accent" or "Stroke")
                 end
                 for _, lbl in ipairs(ch:GetChildren()) do
                     if lbl:IsA("TextLabel") then
                         lbl.TextColor3 = chSel and Theme.AccentText or Theme.Text
                         lbl:SetAttribute("ThemeTextRole", chSel and "AccentText" or "Text")
+                        lbl.TextStrokeColor3 = chSel and Theme.Background or Theme.TextStroke
+                        lbl:SetAttribute("ThemeTextStrokeRole", chSel and "Background" or "TextStroke")
                     end
                 end
             end
