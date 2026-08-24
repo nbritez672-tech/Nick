@@ -3241,25 +3241,8 @@ function YinYang:CreateWindow(title_text, startTheme)
 
     --// VideoFrame opcional: queda detrás del contenido y se muestra solo cuando
     --// el asset termina de cargar. Si no existe o falla, BackgroundArt permanece visible.
-    local BackgroundVideo = nil
-    pcall(function()
-        BackgroundVideo = mk("VideoFrame", {
-            Name = "BackgroundVideo",
-            Parent = ContentArea,
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.new(0.5, 0, 0.5, 0),
-            Size = UDim2.new(1, 30, 1, 30),
-            BackgroundTransparency = 1,
-            Video = "",
-            Looped = true,
-            Playing = false,
-            Volume = 0,
-            Visible = false,
-            Active = false,
-            ZIndex = 5,
-        })
-        corner(BackgroundVideo, 8)
-    end)
+    --// Se crea más abajo, como campo de Window directamente (no local suelto) —
+    --// la función ya está muy cerca del límite de 200 locals.
 
     local Overlay = mk("Frame", {
         Size = UDim2.new(1, 0, 1, 0),
@@ -3344,8 +3327,25 @@ function YinYang:CreateWindow(title_text, startTheme)
     Window.FloatingToggles = {}
     Window.ScreenGui = ScreenGui
     Window.BackgroundArt = BackgroundArt
-    Window.BackgroundVideo = BackgroundVideo
-    Window.VideoBackgroundSupported = BackgroundVideo ~= nil
+    pcall(function()
+        Window.BackgroundVideo = mk("VideoFrame", {
+            Name = "BackgroundVideo",
+            Parent = ContentArea,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(0.5, 0, 0.5, 0),
+            Size = UDim2.new(1, 30, 1, 30),
+            BackgroundTransparency = 1,
+            Video = "",
+            Looped = true,
+            Playing = false,
+            Volume = 0,
+            Visible = false,
+            Active = false,
+            ZIndex = 5,
+        })
+        corner(Window.BackgroundVideo, 8)
+    end)
+    Window.VideoBackgroundSupported = Window.BackgroundVideo ~= nil
     Window.TopBarArt     = TopBarArt
     Window.TabListArt    = TabListArt
 
@@ -3364,7 +3364,9 @@ function YinYang:CreateWindow(title_text, startTheme)
 
     --// DETECCIÓN DE PLATAFORMA — compatible con todos los ejecutadores
     --// Cascada: UIS → tamaño de pantalla. Todo en pcall, sin asumir APIs.
-    local function detectPlatformType()
+    --// Campo de Window (no local suelto): la función ya está muy cerca del
+    --// límite de 200 locals, así que esto evita sumar un slot más.
+    Window.DetectPlatformType = function()
         local hasKeyboard, hasMouse, hasTouch = false, false, false
         pcall(function() hasKeyboard = UserInputService.KeyboardEnabled end)
         pcall(function() hasMouse    = UserInputService.MouseEnabled    end)
@@ -3386,7 +3388,7 @@ function YinYang:CreateWindow(title_text, startTheme)
 
         local platformMode = SavedConfig.PlatformMode or "Auto"
         if platformMode == "Auto" then
-            if detectPlatformType() == "PC" then
+            if Window.DetectPlatformType() == "PC" then
                 effectiveMode = "PC"
             end
         elseif platformMode == "PC" then
@@ -6285,6 +6287,9 @@ function YinYang:CreateWindow(title_text, startTheme)
     --// ════════════════════════════════════════════════════════════════
 
     function Window:SetTheme(themeName)
+        --// Alias local: BackgroundVideo vive en self (Window), no acá.
+        --// Local a SetTheme, con su propio límite de 200 — no afecta a CreateWindow.
+        local BackgroundVideo = self.BackgroundVideo
         if not setActiveTheme(themeName) then
             warn("Tema no encontrado: " .. tostring(themeName))
             return
@@ -9667,46 +9672,52 @@ end
     --// ════════════════════════════════════════════════════════════════
     --// PLATAFORMA / PLATFORM
     --// ════════════════════════════════════════════════════════════════
-    AutoTabAjustes:CreateDivider()
-    AutoTabAjustes:CreateLabel("Plataforma", "Platform", 12)
+    --// Encerrado en do...end: libera los 5 locals de este bloque una vez
+    --// terminado, para no acumularse contra el límite de 200 locals de la
+    --// función. Los closures (callbacks de los toggles) siguen funcionando
+    --// igual — do...end no los destruye, solo libera el slot para reuso.
+    do
+        AutoTabAjustes:CreateDivider()
+        AutoTabAjustes:CreateLabel("Plataforma", "Platform", 12)
 
-    local platformToggles = {}
-    local platformSyncing = false
+        local platformToggles = {}
+        local platformSyncing = false
 
-    local function selectPlatformMode(mode)
-        if platformSyncing then return end
-        platformSyncing = true
-        SavedConfig.PlatformMode = mode
-        SaveConfig()
-        updateWindowSize()
-        for m, tog in pairs(platformToggles) do
-            if tog and tog.SetValue then
-                tog.SetValue(m == mode)
-            end
-        end
-        platformSyncing = false
-    end
-
-    local platformOptions = {
-        { mode = "Auto",   es = "Auto-detectar",  en = "Auto-detect"  },
-        { mode = "PC",     es = "Forzar PC",       en = "Force PC"     },
-        { mode = "Mobile", es = "Forzar Móvil",    en = "Force Mobile" },
-    }
-
-    local currentPlatformMode = SavedConfig.PlatformMode or "Auto"
-    for _, opt in ipairs(platformOptions) do
-        local data = opt
-        platformToggles[data.mode] = AutoTabAjustes:CreateToggle(
-            data.es, data.en,
-            currentPlatformMode == data.mode,
-            function(state)
-                if state then
-                    selectPlatformMode(data.mode)
-                elseif not platformSyncing then
-                    platformToggles[data.mode].SetValue(true)
+        local function selectPlatformMode(mode)
+            if platformSyncing then return end
+            platformSyncing = true
+            SavedConfig.PlatformMode = mode
+            SaveConfig()
+            updateWindowSize()
+            for m, tog in pairs(platformToggles) do
+                if tog and tog.SetValue then
+                    tog.SetValue(m == mode)
                 end
             end
-        )
+            platformSyncing = false
+        end
+
+        local platformOptions = {
+            { mode = "Auto",   es = "Auto-detectar",  en = "Auto-detect"  },
+            { mode = "PC",     es = "Forzar PC",       en = "Force PC"     },
+            { mode = "Mobile", es = "Forzar Móvil",    en = "Force Mobile" },
+        }
+
+        local currentPlatformMode = SavedConfig.PlatformMode or "Auto"
+        for _, opt in ipairs(platformOptions) do
+            local data = opt
+            platformToggles[data.mode] = AutoTabAjustes:CreateToggle(
+                data.es, data.en,
+                currentPlatformMode == data.mode,
+                function(state)
+                    if state then
+                        selectPlatformMode(data.mode)
+                    elseif not platformSyncing then
+                        platformToggles[data.mode].SetValue(true)
+                    end
+                end
+            )
+        end
     end
 
     --// ════════════════════════════════════════════════════════════════
