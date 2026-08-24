@@ -692,6 +692,7 @@ local function LoadConfig()
         favorites = nil,
         logoIcon = nil,
         platformMode = nil,
+        floatStyle = nil,
     }
 
     pcall(function()
@@ -720,6 +721,8 @@ local function LoadConfig()
                         result.logoIcon = value
                     elseif key == "platformMode" then
                         result.platformMode = value
+                    elseif key == "floatStyle" then
+                        result.floatStyle = value
                     end
                 end
             end
@@ -1987,6 +1990,193 @@ local function setActiveTheme(name)
 end
 
 setActiveTheme("Dark")
+
+--// AJUSTES EXTRAÍDOS: mantiene la lógica de Ajustes fuera de CreateWindow.
+--// Los getters/setters de SlidersHidden conservan el estado local que usa
+--// CreateSlider sin acoplar esta función al scope de CreateWindow.
+local function BuildAjustesExtras(Window, AutoTabAjustes, getSlidersHidden, setSlidersHidden)
+    AutoTabAjustes:CreateToggle("Freeze Icono", "Freeze Icon", false, function(state)
+        IconoCongelado = state
+        if Window.Dragon and Window.Dragon.Draggable then
+            Window.Dragon.Draggable = not state
+        end
+        if state then
+            AutoTabAjustes:CreateLabel("Icono congelado (No se puede mover)", "Icon frozen (Cannot be moved)", 11)
+        end
+    end)
+
+    --// ════════════════════════════════════════════════════════════════
+    AutoTabAjustes:CreateDivider()
+    AutoTabAjustes:CreateLabel("Sonidos", "Sounds", 12)
+    AutoTabAjustes:CreateToggle("Sonidos Dinámicos", "Dynamic Sounds", DynamicClickSoundsEnabled, function(state)
+        DynamicClickSoundsEnabled = state
+        AutoTabAjustes:CreateLabel(
+            state and " Sonidos por tema activados" or " Sonidos desactivados",
+            state and " Theme sounds enabled"      or " Sounds disabled",
+            11
+        )
+    end)
+
+    --// ════════════════════════════════════════════════════════════════
+    AutoTabAjustes:CreateDivider()
+    AutoTabAjustes:CreateLabel("Sliders", "Sliders", 12)
+    AutoTabAjustes:CreateToggle("Ocultar Sliders", "Hide Sliders", getSlidersHidden(), function(state)
+        setSlidersHidden(state)
+        for _, obj in ipairs(Window.ScreenGui:GetDescendants()) do
+            if obj:GetAttribute("IsSliderHolder") then
+                obj.Visible = not state
+            end
+        end
+        SavedConfig.HideSliders = state
+        SaveConfig()
+    end)
+
+    --// ════════════════════════════════════════════════════════════════
+    --// PLATAFORMA / PLATFORM
+    --// ════════════════════════════════════════════════════════════════
+    AutoTabAjustes:CreateDivider()
+    AutoTabAjustes:CreateLabel("Plataforma", "Platform", 12)
+
+    local platformToggles = {}
+    local platformSyncing = false
+
+    local function selectPlatformMode(mode)
+        if platformSyncing then return end
+        platformSyncing = true
+        SavedConfig.PlatformMode = mode
+        SaveConfig()
+        Window.UpdateWindowSize()
+        for m, tog in pairs(platformToggles) do
+            if tog and tog.SetValue then
+                tog.SetValue(m == mode)
+            end
+        end
+        platformSyncing = false
+    end
+
+    local platformOptions = {
+        { mode = "Auto",   es = "Auto-detectar",  en = "Auto-detect"  },
+        { mode = "PC",     es = "Forzar PC",       en = "Force PC"     },
+        { mode = "Mobile", es = "Forzar Móvil",    en = "Force Mobile" },
+    }
+
+    local currentPlatformMode = SavedConfig.PlatformMode or "Auto"
+    for _, opt in ipairs(platformOptions) do
+        local data = opt
+        platformToggles[data.mode] = AutoTabAjustes:CreateToggle(
+            data.es, data.en,
+            currentPlatformMode == data.mode,
+            function(state)
+                if state then
+                    selectPlatformMode(data.mode)
+                elseif not platformSyncing then
+                    platformToggles[data.mode].SetValue(true)
+                end
+            end
+        )
+    end
+
+    --// ════════════════════════════════════════════════════════════════
+    --// ESTILO DE TOGGLE FLOTANTE / FLOATING TOGGLE STYLE
+    --// ════════════════════════════════════════════════════════════════
+    AutoTabAjustes:CreateDivider()
+    AutoTabAjustes:CreateLabel("Estilo de Toggle Flotante", "Floating Toggle Style", 12)
+    AutoTabAjustes:CreateLabel(
+        "Se aplica al instante, incluso a los toggles que ya tenés flotando",
+        "Applies instantly, even to toggles you already have floating",
+        10
+    )
+
+    local floatStyleToggles = {}
+    local floatStyleSyncing = false
+
+    local function selectFloatingToggleStyle(styleValue)
+        if floatStyleSyncing then return end
+        floatStyleSyncing = true
+        SavedConfig.FloatingToggleStyle = styleValue
+        SaveConfig()
+        Window.ApplyFloatingStyle()
+        for s, tog in pairs(floatStyleToggles) do
+            if tog and tog.SetValue then
+                tog.SetValue(s == styleValue)
+            end
+        end
+        floatStyleSyncing = false
+    end
+
+    local floatStyleOptions = {
+        { style = "Pill",   es = "Píldora (actual)", en = "Pill (current)" },
+        { style = "Circle", es = "Círculo",          en = "Circle"         },
+    }
+
+    local currentFloatStyle = SavedConfig.FloatingToggleStyle or "Pill"
+    for _, opt in ipairs(floatStyleOptions) do
+        local data = opt
+        floatStyleToggles[data.style] = AutoTabAjustes:CreateToggle(
+            data.es, data.en,
+            currentFloatStyle == data.style,
+            function(state)
+                if state then
+                    selectFloatingToggleStyle(data.style)
+                elseif not floatStyleSyncing then
+                    floatStyleToggles[data.style].SetValue(true)
+                end
+            end
+        )
+    end
+
+    --// ════════════════════════════════════════════════════════════════
+    --// IDIOMA / LANGUAGE
+    --// ════════════════════════════════════════════════════════════════
+    AutoTabAjustes:CreateDivider()
+    AutoTabAjustes:CreateLabel("Idioma", "Language", 12)
+
+    local languageToggles = {}
+    local languageSyncing = false
+
+    local function selectLibraryLanguage(code)
+        if languageSyncing then return end
+        languageSyncing = true
+        if ChangeLanguage(code) then
+            SaveConfig()
+            SaveLanguageConfig()
+            for languageCode, toggle in pairs(languageToggles) do
+                if toggle and toggle.SetValue then
+                    toggle.SetValue(languageCode == code)
+                end
+            end
+        end
+        languageSyncing = false
+    end
+
+    local languageOptions = {
+        { code = "es", es = "Español", en = "Spanish" },
+        { code = "en", es = "English", en = "English" },
+        { code = "vi", es = "Tiếng Việt", en = "Vietnamese" },
+        { code = "pt", es = "Portugués", en = "Portuguese" },
+    }
+
+    for _, option in ipairs(languageOptions) do
+        local data = option
+        languageToggles[data.code] = AutoTabAjustes:CreateToggle(
+            data.es, data.en,
+            LanguageSystem.CurrentLanguage == data.code,
+            function(state)
+                if state then
+                    selectLibraryLanguage(data.code)
+                elseif not languageSyncing then
+                    languageToggles[data.code].SetValue(true)
+                end
+            end
+        )
+    end
+
+    AutoTabAjustes:CreateDivider()
+    AutoTabAjustes:CreateLabel(" Apariencia", " Appearance", 12)
+    AutoTabAjustes:CreateLabel("Versión: v28 ULTRA MEJORADA", "Version: v28 ULTRA IMPROVED", 10)
+    AutoTabAjustes:CreateLabel("Chat Fullscreen:  ACTIVO", "Chat Fullscreen:  ACTIVE", 10)
+    AutoTabAjustes:CreateLabel("Colores Dinámicos:  ACTIVO", "Dynamic Colors:  ACTIVE", 10)
+end
 
 --// MAIN OBJECT - Global para que otros scripts puedan usarlo
 _G.YinYang = {}
@@ -3412,8 +3602,8 @@ function YinYang:CreateWindow(title_text, startTheme)
     --// Campo de Window (no local suelto): mismo motivo que arriba.
     Window.ApplyFloatingStyle = function()
         local isCircleStyle = (SavedConfig.FloatingToggleStyle or "Pill") == "Circle"
-        local floatW = isCircleStyle and 110 or 200
-        local floatH = isCircleStyle and 110 or 36
+        local floatW = isCircleStyle and 84 or 200
+        local floatH = isCircleStyle and 84 or 36
 
         for _, floatData in ipairs(Window.FloatingToggles or {}) do
             local win = floatData and floatData.Window
@@ -3427,7 +3617,7 @@ function YinYang:CreateWindow(title_text, startTheme)
                     win.Position.X.Scale, curCenterX - floatW / 2,
                     win.Position.Y.Scale, curCenterY - floatH / 2
                 )
-                win.BackgroundTransparency = isCircleStyle and 0.08 or 0.30
+                win.BackgroundTransparency = isCircleStyle and 0.55 or 0.30
 
                 --// Degradado glassy: solo en píldora
                 local existingGradient = win:FindFirstChildOfClass("UIGradient")
@@ -3456,11 +3646,14 @@ function YinYang:CreateWindow(title_text, startTheme)
 
                 local label = win:FindFirstChildOfClass("TextLabel")
                 if label then
-                    label.Size = isCircleStyle and UDim2.new(1, -32, 1, -16) or UDim2.new(1, -24, 1, 0)
-                    label.Position = isCircleStyle and UDim2.new(0, 16, 0, 8) or UDim2.new(0, 12, 0, 0)
-                    label.TextSize = isCircleStyle and 16 or 21
+                    label.Size = isCircleStyle and UDim2.new(1, -24, 1, -24) or UDim2.new(1, -24, 1, 0)
+                    label.Position = isCircleStyle and UDim2.new(0, 12, 0, 12) or UDim2.new(0, 12, 0, 0)
+                    label.TextSize = isCircleStyle and 13 or 21
                     label.TextWrapped = isCircleStyle
                     label.TextTruncate = isCircleStyle and Enum.TextTruncate.None or Enum.TextTruncate.AtEnd
+                end
+                if floatData.ClampPosition then
+                    pcall(floatData.ClampPosition)
                 end
             end
         end
@@ -3486,6 +3679,17 @@ function YinYang:CreateWindow(title_text, startTheme)
     --// Campo de Window (no local suelto): la función ya está muy cerca del
     --// límite de 200 locals, así que esto evita sumar un slot más.
     Window.DetectPlatformType = function()
+        local preferredInput = nil
+        pcall(function()
+            local preferred = UserInputService.PreferredInput
+            if preferred == Enum.PreferredInput.KeyboardAndMouse then
+                preferredInput = "PC"
+            elseif preferred == Enum.PreferredInput.Touch then
+                preferredInput = "Mobile"
+            end
+        end)
+        if preferredInput then return preferredInput end
+
         local hasKeyboard, hasMouse, hasTouch = false, false, false
         pcall(function() hasKeyboard = UserInputService.KeyboardEnabled end)
         pcall(function() hasMouse    = UserInputService.MouseEnabled    end)
@@ -3501,7 +3705,7 @@ function YinYang:CreateWindow(title_text, startTheme)
         return (screenX >= 1080) and "PC" or "Mobile"
     end
 
-    local function updateWindowSize()
+    Window.UpdateWindowSize = function()
         -- Modo efectivo: empieza en Small/Large (móvil), se puede elevar a PC
         local effectiveMode = LibrarySizeMode
 
@@ -3532,8 +3736,8 @@ function YinYang:CreateWindow(title_text, startTheme)
         end
     end
 
-    updateWindowSize()
-    ScreenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateWindowSize)
+    Window.UpdateWindowSize()
+    ScreenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(Window.UpdateWindowSize)
 
     function Window:SetLibraryVersion(isLarge)
         LibrarySizeMode = isLarge and "Large" or "Small"
@@ -3542,7 +3746,7 @@ function YinYang:CreateWindow(title_text, startTheme)
         SavedConfig.LibrarySizeMode = LibrarySizeMode
         SavedConfig.LibraryHeight = self.LibraryHeight
         SaveConfig()
-        updateWindowSize()
+        Window.UpdateWindowSize()
     end
 
     Window.LibrarySizeMode = LibrarySizeMode
@@ -3868,8 +4072,8 @@ function YinYang:CreateWindow(title_text, startTheme)
                 --// Estilo elegido en Ajustes: "Pill" (actual) o "Circle" (nuevo, redondo)
                 local floatStyle    = SavedConfig.FloatingToggleStyle or "Pill"
                 local isCircleStyle = (floatStyle == "Circle")
-                local floatW = isCircleStyle and 110 or 200
-                local floatH = isCircleStyle and 110 or 36
+                local floatW = isCircleStyle and 84 or 200
+                local floatH = isCircleStyle and 84 or 36
 
                 --// GLOW EXTERIOR - invisible, solo para sincronía de posición
                 FloatingGlow = mk("Frame", {
@@ -3889,7 +4093,7 @@ function YinYang:CreateWindow(title_text, startTheme)
                     Size = UDim2.fromOffset(floatW, floatH),
                     Position = UDim2.new(0.5, -floatW/2, 0.5, -floatH/2),
                     BackgroundColor3 = isCircleStyle and Color3.fromRGB(20, 20, 26) or Theme.Secondary,
-                    BackgroundTransparency = isCircleStyle and 0.08 or 0.30,
+                    BackgroundTransparency = isCircleStyle and 0.55 or 0.30,
                     BorderSizePixel = 0,
                     ZIndex = 4
                 })
@@ -3921,13 +4125,13 @@ function YinYang:CreateWindow(title_text, startTheme)
                 --// TEXTO CENTRADO — más chico y con wrap en el círculo (2 líneas, como la referencia)
                 local FloatLabel = mk("TextLabel", {
                     Parent = FloatingWindow,
-                    Size = isCircleStyle and UDim2.new(1, -32, 1, -16) or UDim2.new(1, -24, 1, 0),
-                    Position = isCircleStyle and UDim2.new(0, 16, 0, 8) or UDim2.new(0, 12, 0, 0),
+                    Size = isCircleStyle and UDim2.new(1, -24, 1, -24) or UDim2.new(1, -24, 1, 0),
+                    Position = isCircleStyle and UDim2.new(0, 12, 0, 12) or UDim2.new(0, 12, 0, 0),
                     BackgroundTransparency = 1,
                     Text = displayText,
                     TextColor3 = Theme.Text,
                     Font = Enum.Font.GothamBlack,
-                    TextSize = isCircleStyle and 16 or 21,
+                    TextSize = isCircleStyle and 13 or 21,
                     TextWrapped = isCircleStyle,
                     TextXAlignment = Enum.TextXAlignment.Center,
                     TextYAlignment = Enum.TextYAlignment.Center,
@@ -3987,6 +4191,37 @@ function YinYang:CreateWindow(title_text, startTheme)
                 local dragStart, startPos
                 local dragMoved = false
 
+                --// Mantiene la ventana dentro del viewport en resoluciones y orientaciones distintas.
+                --// Usa la escala original de Position para no romper el posicionamiento existente.
+                local function clampFloatingWindow()
+                    if not FloatingWindow or not FloatingWindow.Parent then return end
+
+                    local viewport = Window.ScreenGui.AbsoluteSize
+                    local windowSize = FloatingWindow.AbsoluteSize
+                    if viewport.X <= 0 or viewport.Y <= 0 or windowSize.X <= 0 or windowSize.Y <= 0 then
+                        return
+                    end
+
+                    local margin = 8
+                    local pos = FloatingWindow.Position
+                    local minX = margin - pos.X.Scale * viewport.X
+                    local maxX = viewport.X - windowSize.X - margin - pos.X.Scale * viewport.X
+                    local minY = margin - pos.Y.Scale * viewport.Y
+                    local maxY = viewport.Y - windowSize.Y - margin - pos.Y.Scale * viewport.Y
+
+                    local clampedX = maxX < minX and ((viewport.X - windowSize.X) / 2) - pos.X.Scale * viewport.X
+                        or math.clamp(pos.X.Offset, minX, maxX)
+                    local clampedY = maxY < minY and ((viewport.Y - windowSize.Y) / 2) - pos.Y.Scale * viewport.Y
+                        or math.clamp(pos.Y.Offset, minY, maxY)
+
+                    if clampedX ~= pos.X.Offset or clampedY ~= pos.Y.Offset then
+                        FloatingWindow.Position = UDim2.new(pos.X.Scale, clampedX, pos.Y.Scale, clampedY)
+                    end
+                end
+
+                clampFloatingWindow()
+                track(Window.ScreenGui:GetPropertyChangedSignal("AbsoluteSize"):Connect(clampFloatingWindow))
+
                 FloatClick.InputBegan:Connect(function(input)
                     if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and not isLocked then
                         dragging = false
@@ -4003,6 +4238,7 @@ function YinYang:CreateWindow(title_text, startTheme)
                             dragging = true
                             dragMoved = true
                             FloatingWindow.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+                            clampFloatingWindow()
                         end
                     end
                 end))
@@ -4014,7 +4250,12 @@ function YinYang:CreateWindow(title_text, startTheme)
                     end
                 end))
 
-                table.insert(Window.FloatingToggles, {Window = FloatingWindow, Name = displayText})
+                table.insert(Window.FloatingToggles, {
+                    Window = FloatingWindow,
+                    Name = displayText,
+                    RefreshVisual = updateFloatVisual,
+                    ClampPosition = clampFloatingWindow,
+                })
             end
             
             --// ═════════════════════════════════════════════════════════════════════════
@@ -6439,6 +6680,9 @@ function YinYang:CreateWindow(title_text, startTheme)
                     swapThemeColor(obj, Theme)
                 end
                 swapThemeColor(fw, Theme)
+                if floatData.RefreshVisual then
+                    pcall(floatData.RefreshVisual)
+                end
             end
         end
 
@@ -9759,199 +10003,16 @@ end
 
     --//  4TA PESTAÑA PERMANENTE: AJUSTES
     local AutoTabAjustes = Window:CreateTab("Ajustes", "Settings", "rbxassetid://130729134186771")
-    AutoTabAjustes:CreateLabel("Configuración", "Settings", 14)
-    AutoTabAjustes:CreateDivider()
-    
-    AutoTabAjustes:CreateToggle("Freeze Icono", "Freeze Icon", false, function(state)
-        IconoCongelado = state
-        if Window.Dragon and Window.Dragon.Draggable then
-            Window.Dragon.Draggable = not state
+    BuildAjustesExtras(
+        Window,
+        AutoTabAjustes,
+        function()
+            return SlidersHidden
+        end,
+        function(value)
+            SlidersHidden = value
         end
-        if state then
-            AutoTabAjustes:CreateLabel("Icono congelado (No se puede mover)", "Icon frozen (Cannot be moved)", 11)
-        end
-    end)
-    
-    --// ════════════════════════════════════════════════════════════════
-    AutoTabAjustes:CreateDivider()
-    AutoTabAjustes:CreateLabel("Sonidos", "Sounds", 12)
-    AutoTabAjustes:CreateToggle("Sonidos Dinámicos", "Dynamic Sounds", DynamicClickSoundsEnabled, function(state)
-        DynamicClickSoundsEnabled = state
-        AutoTabAjustes:CreateLabel(
-            state and " Sonidos por tema activados" or " Sonidos desactivados",
-            state and " Theme sounds enabled"      or " Sounds disabled",
-            11
-        )
-    end)
-
-    --// ════════════════════════════════════════════════════════════════
-    AutoTabAjustes:CreateDivider()
-    AutoTabAjustes:CreateLabel("Sliders", "Sliders", 12)
-    AutoTabAjustes:CreateToggle("Ocultar Sliders", "Hide Sliders", SlidersHidden, function(state)
-        SlidersHidden = state
-        for _, obj in ipairs(Window.ScreenGui:GetDescendants()) do
-            if obj:GetAttribute("IsSliderHolder") then
-                obj.Visible = not state
-            end
-        end
-        SavedConfig.HideSliders = state
-        SaveConfig()
-    end)
-
-    --// ════════════════════════════════════════════════════════════════
-    --// PLATAFORMA / PLATFORM
-    --// ════════════════════════════════════════════════════════════════
-    --// Encerrado en do...end: libera los locals de este bloque una vez
-    --// terminado, para no acumularse contra el límite de 200 locals de la
-    --// función. Los closures (callbacks de los toggles) siguen funcionando
-    --// igual — do...end no los destruye, solo libera el slot para reuso.
-    do
-        AutoTabAjustes:CreateDivider()
-        AutoTabAjustes:CreateLabel("Plataforma", "Platform", 12)
-
-        local platformToggles = {}
-        local platformSyncing = false
-
-        local function selectPlatformMode(mode)
-            if platformSyncing then return end
-            platformSyncing = true
-            SavedConfig.PlatformMode = mode
-            SaveConfig()
-            updateWindowSize()
-            for m, tog in pairs(platformToggles) do
-                if tog and tog.SetValue then
-                    tog.SetValue(m == mode)
-                end
-            end
-            platformSyncing = false
-        end
-
-        local platformOptions = {
-            { mode = "Auto",   es = "Auto-detectar",  en = "Auto-detect"  },
-            { mode = "PC",     es = "Forzar PC",       en = "Force PC"     },
-            { mode = "Mobile", es = "Forzar Móvil",    en = "Force Mobile" },
-        }
-
-        local currentPlatformMode = SavedConfig.PlatformMode or "Auto"
-        for _, opt in ipairs(platformOptions) do
-            local data = opt
-            platformToggles[data.mode] = AutoTabAjustes:CreateToggle(
-                data.es, data.en,
-                currentPlatformMode == data.mode,
-                function(state)
-                    if state then
-                        selectPlatformMode(data.mode)
-                    elseif not platformSyncing then
-                        platformToggles[data.mode].SetValue(true)
-                    end
-                end
-        )
-    end
-    end
-
-    --// ════════════════════════════════════════════════════════════════
-    --// ESTILO DE TOGGLE FLOTANTE / FLOATING TOGGLE STYLE
-    --// ════════════════════════════════════════════════════════════════
-    --// Encerrado en do...end por el mismo motivo que Plataforma (límite 200 locals)
-    do
-        AutoTabAjustes:CreateDivider()
-        AutoTabAjustes:CreateLabel("Estilo de Toggle Flotante", "Floating Toggle Style", 12)
-        AutoTabAjustes:CreateLabel(
-            "Se aplica al instante, incluso a los toggles que ya tenés flotando",
-            "Applies instantly, even to toggles you already have floating",
-            10
-        )
-
-        local floatStyleToggles = {}
-        local floatStyleSyncing = false
-
-        local function selectFloatingToggleStyle(styleValue)
-            if floatStyleSyncing then return end
-            floatStyleSyncing = true
-            SavedConfig.FloatingToggleStyle = styleValue
-            SaveConfig()
-            Window.ApplyFloatingStyle()
-            for s, tog in pairs(floatStyleToggles) do
-                if tog and tog.SetValue then
-                    tog.SetValue(s == styleValue)
-                end
-            end
-            floatStyleSyncing = false
-        end
-
-        local floatStyleOptions = {
-            { style = "Pill",   es = "Píldora (actual)", en = "Pill (current)" },
-            { style = "Circle", es = "Círculo",          en = "Circle"         },
-        }
-
-        local currentFloatStyle = SavedConfig.FloatingToggleStyle or "Pill"
-        for _, opt in ipairs(floatStyleOptions) do
-            local data = opt
-            floatStyleToggles[data.style] = AutoTabAjustes:CreateToggle(
-                data.es, data.en,
-                currentFloatStyle == data.style,
-                function(state)
-                    if state then
-                        selectFloatingToggleStyle(data.style)
-                    elseif not floatStyleSyncing then
-                        floatStyleToggles[data.style].SetValue(true)
-                    end
-                end
-            )
-        end
-    end
-
-    --// ════════════════════════════════════════════════════════════════
-    --// IDIOMA / LANGUAGE
-    --// ════════════════════════════════════════════════════════════════
-    AutoTabAjustes:CreateDivider()
-    AutoTabAjustes:CreateLabel("Idioma", "Language", 12)
-
-    local languageToggles = {}
-    local languageSyncing = false
-
-    local function selectLibraryLanguage(code)
-        if languageSyncing then return end
-        languageSyncing = true
-        if ChangeLanguage(code) then
-            SaveConfig()
-            SaveLanguageConfig()
-            for languageCode, toggle in pairs(languageToggles) do
-                if toggle and toggle.SetValue then
-                    toggle.SetValue(languageCode == code)
-                end
-            end
-        end
-        languageSyncing = false
-    end
-
-    local languageOptions = {
-        { code = "es", es = "Español", en = "Spanish" },
-        { code = "en", es = "English", en = "English" },
-        { code = "vi", es = "Tiếng Việt", en = "Vietnamese" },
-        { code = "pt", es = "Portugués", en = "Portuguese" },
-    }
-
-    for _, option in ipairs(languageOptions) do
-        local data = option
-        languageToggles[data.code] = AutoTabAjustes:CreateToggle(
-            data.es, data.en,
-            LanguageSystem.CurrentLanguage == data.code,
-            function(state)
-                if state then
-                    selectLibraryLanguage(data.code)
-                elseif not languageSyncing then
-                    languageToggles[data.code].SetValue(true)
-                end
-            end
-        )
-    end
-
-    AutoTabAjustes:CreateDivider()
-    AutoTabAjustes:CreateLabel(" Apariencia", " Appearance", 12)
-    AutoTabAjustes:CreateLabel("Versión: v28 ULTRA MEJORADA", "Version: v28 ULTRA IMPROVED", 10)
-    AutoTabAjustes:CreateLabel("Chat Fullscreen:  ACTIVO", "Chat Fullscreen:  ACTIVE", 10)
-    AutoTabAjustes:CreateLabel("Colores Dinámicos:  ACTIVO", "Dynamic Colors:  ACTIVE", 10)
+    )
 
     
     --//  SISTEMA DE CHAT v27 (NUEVO)
