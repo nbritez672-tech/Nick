@@ -603,6 +603,7 @@ local SavedConfig = {
     HideSliders = false,
     Favorites = "",
     SelectedLogoIcon = "ClassicYinYang",
+    PlatformMode = "Auto",   -- "Auto" | "PC" | "Mobile"
 }
 
 local function SaveConfig()
@@ -617,6 +618,7 @@ local function SaveConfig()
             "hideSliders:" .. tostring(SavedConfig.HideSliders or false),
             "favorites:" .. tostring(SavedConfig.Favorites or ""),
             "logoIcon:" .. tostring(SavedConfig.SelectedLogoIcon or "ClassicYinYang"),
+            "platformMode:" .. tostring(SavedConfig.PlatformMode or "Auto"),
             "time:" .. tostring(os.time()),
         }, "|")
         writefile(ConfigFile, configData)
@@ -634,6 +636,7 @@ local function LoadConfig()
         hideSliders = nil,
         favorites = nil,
         logoIcon = nil,
+        platformMode = nil,
     }
 
     pcall(function()
@@ -660,6 +663,8 @@ local function LoadConfig()
                         result.favorites = value
                     elseif key == "logoIcon" then
                         result.logoIcon = value
+                    elseif key == "platformMode" then
+                        result.platformMode = value
                     end
                 end
             end
@@ -1958,6 +1963,9 @@ function YinYang:CreateWindow(title_text, startTheme)
         end
         if ConfigCargada.logoIcon then
             SavedConfig.SelectedLogoIcon = ConfigCargada.logoIcon
+        end
+        if ConfigCargada.platformMode then
+            SavedConfig.PlatformMode = ConfigCargada.platformMode
         end
     end
 
@@ -3343,8 +3351,9 @@ function YinYang:CreateWindow(title_text, startTheme)
 
     --// TAMAÑO DE LA VENTANA: solo dos versiones fijas (sin sliders intermedios)
     local LibrarySizePresets = {
-        Small = { Width = 500, Height = 430 },
-        Large = { Width = 760, Height = 720 },
+        Small  = { Width = 500,  Height = 430 },
+        Large  = { Width = 760,  Height = 720 },
+        PC     = { Width = 920,  Height = 620 },
     }
 
     local LibrarySizeMode = ((SavedConfig.LibrarySizeMode or "Small") == "Large") and "Large" or "Small"
@@ -3353,20 +3362,51 @@ function YinYang:CreateWindow(title_text, startTheme)
         return LibrarySizePresets[LibrarySizeMode] or LibrarySizePresets.Small
     end
 
+    --// DETECCIÓN DE PLATAFORMA — compatible con todos los ejecutadores
+    --// Cascada: UIS → tamaño de pantalla. Todo en pcall, sin asumir APIs.
+    local function detectPlatformType()
+        local hasKeyboard, hasMouse, hasTouch = false, false, false
+        pcall(function() hasKeyboard = UserInputService.KeyboardEnabled end)
+        pcall(function() hasMouse    = UserInputService.MouseEnabled    end)
+        pcall(function() hasTouch    = UserInputService.TouchEnabled    end)
+
+        local screenX = 0
+        pcall(function()
+            screenX = workspace.CurrentCamera.ViewportSize.X
+        end)
+
+        if hasKeyboard and hasMouse and not hasTouch then return "PC"     end
+        if hasTouch and not hasMouse and not hasKeyboard then return "Mobile" end
+        return (screenX >= 1080) and "PC" or "Mobile"
+    end
+
     local function updateWindowSize()
-        local preset = getCurrentLibraryPreset()
-        local screen = ScreenGui.AbsoluteSize
-        local width = preset.Width
-        local height = preset.Height
+        -- Modo efectivo: empieza en Small/Large (móvil), se puede elevar a PC
+        local effectiveMode = LibrarySizeMode
+
+        local platformMode = SavedConfig.PlatformMode or "Auto"
+        if platformMode == "Auto" then
+            if detectPlatformType() == "PC" then
+                effectiveMode = "PC"
+            end
+        elseif platformMode == "PC" then
+            effectiveMode = "PC"
+        end
+        -- platformMode == "Mobile" → effectiveMode queda en LibrarySizeMode (Small/Large)
+
+        local preset = LibrarySizePresets[effectiveMode] or LibrarySizePresets.Small
+        local screen  = ScreenGui.AbsoluteSize
+        local width   = preset.Width
+        local height  = preset.Height
 
         if screen.X > 0 and screen.Y > 0 then
-            width = math.min(width, math.floor(screen.X * 0.92))
+            width  = math.min(width,  math.floor(screen.X * 0.92))
             height = math.min(height, math.floor(screen.Y * 0.92))
         end
 
         shownSize = UDim2.new(0, width, 0, height)
         if Main and not isMaximized then
-            Main.Size = shownSize
+            Main.Size        = shownSize
             normalWindowSize = shownSize
         end
     end
@@ -9623,6 +9663,51 @@ end
         SavedConfig.HideSliders = state
         SaveConfig()
     end)
+
+    --// ════════════════════════════════════════════════════════════════
+    --// PLATAFORMA / PLATFORM
+    --// ════════════════════════════════════════════════════════════════
+    AutoTabAjustes:CreateDivider()
+    AutoTabAjustes:CreateLabel("Plataforma", "Platform", 12)
+
+    local platformToggles = {}
+    local platformSyncing = false
+
+    local function selectPlatformMode(mode)
+        if platformSyncing then return end
+        platformSyncing = true
+        SavedConfig.PlatformMode = mode
+        SaveConfig()
+        updateWindowSize()
+        for m, tog in pairs(platformToggles) do
+            if tog and tog.SetValue then
+                tog.SetValue(m == mode)
+            end
+        end
+        platformSyncing = false
+    end
+
+    local platformOptions = {
+        { mode = "Auto",   es = "Auto-detectar",  en = "Auto-detect"  },
+        { mode = "PC",     es = "Forzar PC",       en = "Force PC"     },
+        { mode = "Mobile", es = "Forzar Móvil",    en = "Force Mobile" },
+    }
+
+    local currentPlatformMode = SavedConfig.PlatformMode or "Auto"
+    for _, opt in ipairs(platformOptions) do
+        local data = opt
+        platformToggles[data.mode] = AutoTabAjustes:CreateToggle(
+            data.es, data.en,
+            currentPlatformMode == data.mode,
+            function(state)
+                if state then
+                    selectPlatformMode(data.mode)
+                elseif not platformSyncing then
+                    platformToggles[data.mode].SetValue(true)
+                end
+            end
+        )
+    end
 
     --// ════════════════════════════════════════════════════════════════
     --// IDIOMA / LANGUAGE
