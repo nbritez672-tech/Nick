@@ -342,6 +342,47 @@ local function IsSupportedLanguage(code)
     return false
 end
 
+--// Detecta el idioma real del jugador usando las APIs nativas de Roblox,
+--// en vez de asumir "es" siempre. Se usa SOLO la primera vez que se abre
+--// la librería (sin config guardada todavía) — una vez que el jugador
+--// elige o se detecta un idioma, esa elección se guarda y prevalece
+--// siempre sobre la detección automática en aperturas futuras.
+--//
+--// Fuente 1: LocalizationService:GetRobloxLocaleId() — idioma de la
+--//           cuenta/cliente de Roblox del jugador (más confiable).
+--// Fuente 2: Players.LocalPlayer.LocaleId — fallback si la fuente 1
+--//           no está disponible en este entorno/executor.
+--// Ambas devuelven códigos tipo "es-419", "pt-br", "vi-vn": nos quedamos
+--// solo con el subtag de idioma (lo que va antes del guión).
+local function DetectSystemLanguage()
+    local localeId = nil
+
+    pcall(function()
+        localeId = game:GetService("LocalizationService"):GetRobloxLocaleId()
+    end)
+
+    if not localeId or localeId == "" then
+        pcall(function()
+            localeId = Players.LocalPlayer.LocaleId
+        end)
+    end
+
+    if not localeId or localeId == "" then
+        return "es"  -- no se pudo detectar nada: mantiene el default histórico
+    end
+
+    local langSubtag = localeId:match("^(%a+)") or ""
+    langSubtag = langSubtag:lower()
+
+    if IsSupportedLanguage(langSubtag) then
+        return langSubtag
+    end
+
+    --// Idioma detectado pero no soportado por la librería (ej: fr, de, ja):
+    --// English es el fallback más entendido internacionalmente.
+    return "en"
+end
+
 local function GetText(spanishText, englishText)
     local language = LanguageSystem.CurrentLanguage
     if language == "es" then return spanishText end
@@ -384,14 +425,26 @@ local function SaveLanguageConfig()
 end
 
 local function LoadLanguageConfig()
+    local hasSavedConfig = false
+
     pcall(function()
         if readfile and isfile and isfile("yin_yang_language_config.json") then
             local configJson = readfile("yin_yang_language_config.json")
             LanguageSystem.Config = HttpService:JSONDecode(configJson)
             local savedLanguage = LanguageSystem.Config.Language
             LanguageSystem.CurrentLanguage = IsSupportedLanguage(savedLanguage) and savedLanguage or "es"
+            hasSavedConfig = true
         end
     end)
+
+    if not hasSavedConfig then
+        --// Primer uso: no hay preferencia guardada todavía → detectar el
+        --// idioma real del jugador en vez de asumir "es" a ciegas.
+        local detected = DetectSystemLanguage()
+        LanguageSystem.CurrentLanguage = detected
+        LanguageSystem.Config.Language = detected
+        SaveLanguageConfig()  -- persiste la detección para que no se repita
+    end
 end
 
 LoadLanguageConfig()
@@ -604,6 +657,7 @@ local SavedConfig = {
     Favorites = "",
     SelectedLogoIcon = "ClassicYinYang",
     PlatformMode = "Auto",   -- "Auto" | "PC" | "Mobile"
+    FloatingToggleStyle = "Pill",  -- "Pill" (rectangular actual) | "Circle" (nuevo, redondo)
 }
 
 local function SaveConfig()
@@ -619,6 +673,7 @@ local function SaveConfig()
             "favorites:" .. tostring(SavedConfig.Favorites or ""),
             "logoIcon:" .. tostring(SavedConfig.SelectedLogoIcon or "ClassicYinYang"),
             "platformMode:" .. tostring(SavedConfig.PlatformMode or "Auto"),
+            "floatStyle:" .. tostring(SavedConfig.FloatingToggleStyle or "Pill"),
             "time:" .. tostring(os.time()),
         }, "|")
         writefile(ConfigFile, configData)
@@ -1966,6 +2021,9 @@ function YinYang:CreateWindow(title_text, startTheme)
         end
         if ConfigCargada.platformMode then
             SavedConfig.PlatformMode = ConfigCargada.platformMode
+        end
+        if ConfigCargada.floatStyle then
+            SavedConfig.FloatingToggleStyle = ConfigCargada.floatStyle
         end
     end
 
@@ -3346,6 +3404,67 @@ function YinYang:CreateWindow(title_text, startTheme)
         corner(Window.BackgroundVideo, 8)
     end)
     Window.VideoBackgroundSupported = Window.BackgroundVideo ~= nil
+
+    --// Re-estiliza en vivo las ventanas flotantes ya abiertas cuando cambia
+    --// FloatingToggleStyle en Ajustes. Solo toca las que tienen el atributo
+    --// SupportsFloatStyle (CreateFloatingToggleSimple/CreateFloatingButton no
+    --// lo tienen y quedan intactas, no soportan Pill/Circle).
+    --// Campo de Window (no local suelto): mismo motivo que arriba.
+    Window.ApplyFloatingStyle = function()
+        local isCircleStyle = (SavedConfig.FloatingToggleStyle or "Pill") == "Circle"
+        local floatW = isCircleStyle and 110 or 200
+        local floatH = isCircleStyle and 110 or 36
+
+        for _, floatData in ipairs(Window.FloatingToggles or {}) do
+            local win = floatData and floatData.Window
+            if win and win.Parent and win:GetAttribute("SupportsFloatStyle") then
+                --// Mantener el centro actual — no saltar de posición al re-estilar
+                local curCenterX = win.Position.X.Offset + win.Size.X.Offset / 2
+                local curCenterY = win.Position.Y.Offset + win.Size.Y.Offset / 2
+
+                win.Size = UDim2.fromOffset(floatW, floatH)
+                win.Position = UDim2.new(
+                    win.Position.X.Scale, curCenterX - floatW / 2,
+                    win.Position.Y.Scale, curCenterY - floatH / 2
+                )
+                win.BackgroundTransparency = isCircleStyle and 0.08 or 0.30
+
+                --// Degradado glassy: solo en píldora
+                local existingGradient = win:FindFirstChildOfClass("UIGradient")
+                if isCircleStyle then
+                    if existingGradient then existingGradient:Destroy() end
+                elseif not existingGradient then
+                    mk("UIGradient", {
+                        Color = ColorSequence.new({
+                            ColorSequenceKeypoint.new(0,   Color3.fromRGB(180, 185, 200)),
+                            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(240, 243, 250)),
+                            ColorSequenceKeypoint.new(1,   Color3.fromRGB(180, 185, 200)),
+                        }),
+                        Transparency = NumberSequence.new({
+                            NumberSequenceKeypoint.new(0,   0.45),
+                            NumberSequenceKeypoint.new(0.5, 0.15),
+                            NumberSequenceKeypoint.new(1,   0.45),
+                        }),
+                        Rotation = 90,
+                    }, win)
+                end
+
+                local existingStroke = win:FindFirstChildOfClass("UIStroke")
+                if existingStroke then
+                    existingStroke.Thickness = isCircleStyle and 3 or 2.5
+                end
+
+                local label = win:FindFirstChildOfClass("TextLabel")
+                if label then
+                    label.Size = isCircleStyle and UDim2.new(1, -32, 1, -16) or UDim2.new(1, -24, 1, 0)
+                    label.Position = isCircleStyle and UDim2.new(0, 16, 0, 8) or UDim2.new(0, 12, 0, 0)
+                    label.TextSize = isCircleStyle and 16 or 21
+                    label.TextWrapped = isCircleStyle
+                    label.TextTruncate = isCircleStyle and Enum.TextTruncate.None or Enum.TextTruncate.AtEnd
+                end
+            end
+        end
+    end
     Window.TopBarArt     = TopBarArt
     Window.TabListArt    = TabListArt
 
@@ -3746,6 +3865,12 @@ function YinYang:CreateWindow(title_text, startTheme)
             
             local function createFloatingWindow()
 
+                --// Estilo elegido en Ajustes: "Pill" (actual) o "Circle" (nuevo, redondo)
+                local floatStyle    = SavedConfig.FloatingToggleStyle or "Pill"
+                local isCircleStyle = (floatStyle == "Circle")
+                local floatW = isCircleStyle and 110 or 200
+                local floatH = isCircleStyle and 110 or 36
+
                 --// GLOW EXTERIOR - invisible, solo para sincronía de posición
                 FloatingGlow = mk("Frame", {
                     Parent = Window.ScreenGui,
@@ -3758,51 +3883,55 @@ function YinYang:CreateWindow(title_text, startTheme)
                 })
                 corner(FloatingGlow, 999)
 
-                --// VENTANA PRINCIPAL — estilo glassy pill
+                --// VENTANA PRINCIPAL — píldora glassy o círculo compacto según el estilo
                 FloatingWindow = mk("Frame", {
                     Parent = Window.ScreenGui,
-                    Size = UDim2.fromOffset(200, 36),
-                    Position = UDim2.new(0.5, -100, 0.5, -18),
-                    BackgroundColor3 = Theme.Secondary,
-                    BackgroundTransparency = 0.30,
+                    Size = UDim2.fromOffset(floatW, floatH),
+                    Position = UDim2.new(0.5, -floatW/2, 0.5, -floatH/2),
+                    BackgroundColor3 = isCircleStyle and Color3.fromRGB(20, 20, 26) or Theme.Secondary,
+                    BackgroundTransparency = isCircleStyle and 0.08 or 0.30,
                     BorderSizePixel = 0,
                     ZIndex = 4
                 })
                 FloatingWindow:SetAttribute("ThemeRole", "Secondary")
-                corner(FloatingWindow, 999)
+                FloatingWindow:SetAttribute("SupportsFloatStyle", true)
+                corner(FloatingWindow, 999)  -- clampa a círculo perfecto cuando floatW==floatH
 
-                --// Degradado glassy: más claro al centro, bordes más grises
-                mk("UIGradient", {
-                    Color = ColorSequence.new({
-                        ColorSequenceKeypoint.new(0,   Color3.fromRGB(180, 185, 200)),
-                        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(240, 243, 250)),
-                        ColorSequenceKeypoint.new(1,   Color3.fromRGB(180, 185, 200)),
-                    }),
-                    Transparency = NumberSequence.new({
-                        NumberSequenceKeypoint.new(0,   0.45),
-                        NumberSequenceKeypoint.new(0.5, 0.15),
-                        NumberSequenceKeypoint.new(1,   0.45),
-                    }),
-                    Rotation = 90,
-                }, FloatingWindow)
+                --// Degradado glassy: solo en el estilo píldora (el círculo usa fondo sólido oscuro)
+                if not isCircleStyle then
+                    mk("UIGradient", {
+                        Color = ColorSequence.new({
+                            ColorSequenceKeypoint.new(0,   Color3.fromRGB(180, 185, 200)),
+                            ColorSequenceKeypoint.new(0.5, Color3.fromRGB(240, 243, 250)),
+                            ColorSequenceKeypoint.new(1,   Color3.fromRGB(180, 185, 200)),
+                        }),
+                        Transparency = NumberSequence.new({
+                            NumberSequenceKeypoint.new(0,   0.45),
+                            NumberSequenceKeypoint.new(0.5, 0.15),
+                            NumberSequenceKeypoint.new(1,   0.45),
+                        }),
+                        Rotation = 90,
+                    }, FloatingWindow)
+                end
 
                 --// Borde animado — más grueso para que se note
-                stroke(FloatingWindow, Theme.Accent, 2.5, 0.20)
+                stroke(FloatingWindow, Theme.Accent, isCircleStyle and 3 or 2.5, 0.20)
                 buildAnimatedBorder(FloatingWindow, Theme.Accent, UDim.new(1, 0), true)
 
-                --// TEXTO CENTRADO
+                --// TEXTO CENTRADO — más chico y con wrap en el círculo (2 líneas, como la referencia)
                 local FloatLabel = mk("TextLabel", {
                     Parent = FloatingWindow,
-                    Size = UDim2.new(1, -24, 1, 0),
-                    Position = UDim2.new(0, 12, 0, 0),
+                    Size = isCircleStyle and UDim2.new(1, -32, 1, -16) or UDim2.new(1, -24, 1, 0),
+                    Position = isCircleStyle and UDim2.new(0, 16, 0, 8) or UDim2.new(0, 12, 0, 0),
                     BackgroundTransparency = 1,
                     Text = displayText,
                     TextColor3 = Theme.Text,
                     Font = Enum.Font.GothamBlack,
-                    TextSize = 21,
+                    TextSize = isCircleStyle and 16 or 21,
+                    TextWrapped = isCircleStyle,
                     TextXAlignment = Enum.TextXAlignment.Center,
                     TextYAlignment = Enum.TextYAlignment.Center,
-                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    TextTruncate = isCircleStyle and Enum.TextTruncate.None or Enum.TextTruncate.AtEnd,
                     ZIndex = 5,
                 })
                 FloatLabel:SetAttribute("ThemeTextRole", "Text")
@@ -9672,7 +9801,7 @@ end
     --// ════════════════════════════════════════════════════════════════
     --// PLATAFORMA / PLATFORM
     --// ════════════════════════════════════════════════════════════════
-    --// Encerrado en do...end: libera los 5 locals de este bloque una vez
+    --// Encerrado en do...end: libera los locals de este bloque una vez
     --// terminado, para no acumularse contra el límite de 200 locals de la
     --// función. Los closures (callbacks de los toggles) siguen funcionando
     --// igual — do...end no los destruye, solo libera el slot para reuso.
@@ -9714,6 +9843,58 @@ end
                         selectPlatformMode(data.mode)
                     elseif not platformSyncing then
                         platformToggles[data.mode].SetValue(true)
+                    end
+                end
+        )
+    end
+    end
+
+    --// ════════════════════════════════════════════════════════════════
+    --// ESTILO DE TOGGLE FLOTANTE / FLOATING TOGGLE STYLE
+    --// ════════════════════════════════════════════════════════════════
+    --// Encerrado en do...end por el mismo motivo que Plataforma (límite 200 locals)
+    do
+        AutoTabAjustes:CreateDivider()
+        AutoTabAjustes:CreateLabel("Estilo de Toggle Flotante", "Floating Toggle Style", 12)
+        AutoTabAjustes:CreateLabel(
+            "Se aplica al instante, incluso a los toggles que ya tenés flotando",
+            "Applies instantly, even to toggles you already have floating",
+            10
+        )
+
+        local floatStyleToggles = {}
+        local floatStyleSyncing = false
+
+        local function selectFloatingToggleStyle(styleValue)
+            if floatStyleSyncing then return end
+            floatStyleSyncing = true
+            SavedConfig.FloatingToggleStyle = styleValue
+            SaveConfig()
+            Window.ApplyFloatingStyle()
+            for s, tog in pairs(floatStyleToggles) do
+                if tog and tog.SetValue then
+                    tog.SetValue(s == styleValue)
+                end
+            end
+            floatStyleSyncing = false
+        end
+
+        local floatStyleOptions = {
+            { style = "Pill",   es = "Píldora (actual)", en = "Pill (current)" },
+            { style = "Circle", es = "Círculo",          en = "Circle"         },
+        }
+
+        local currentFloatStyle = SavedConfig.FloatingToggleStyle or "Pill"
+        for _, opt in ipairs(floatStyleOptions) do
+            local data = opt
+            floatStyleToggles[data.style] = AutoTabAjustes:CreateToggle(
+                data.es, data.en,
+                currentFloatStyle == data.style,
+                function(state)
+                    if state then
+                        selectFloatingToggleStyle(data.style)
+                    elseif not floatStyleSyncing then
+                        floatStyleToggles[data.style].SetValue(true)
                     end
                 end
             )
