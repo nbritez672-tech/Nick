@@ -658,10 +658,19 @@ local SavedConfig = {
     SelectedLogoIcon = "ClassicYinYang",
     PlatformMode = "Auto",   -- "Auto" | "PC" | "Mobile"
     FloatingToggleStyle = "Pill",  -- "Pill" (rectangular actual) | "Circle" (nuevo, redondo)
+    Keybinds = {},             -- id "NombrePestaña::NombreOpción" -> Enum.KeyCode.Name
 }
 
 local function SaveConfig()
     pcall(function()
+        local keybindParts = {}
+        for id, keyName in pairs(SavedConfig.Keybinds or {}) do
+            if type(id) == "string" and type(keyName) == "string" and keyName ~= "" then
+                table.insert(keybindParts, id .. "~" .. keyName)
+            end
+        end
+        table.sort(keybindParts)
+
         local configData = table.concat({
             "theme:" .. tostring(SavedConfig.CurrentTheme or CurrentTheme or "Dark"),
             "effect:" .. tostring(SavedConfig.CurrentEffect or "Normal"),
@@ -674,6 +683,7 @@ local function SaveConfig()
             "logoIcon:" .. tostring(SavedConfig.SelectedLogoIcon or "ClassicYinYang"),
             "platformMode:" .. tostring(SavedConfig.PlatformMode or "Auto"),
             "floatStyle:" .. tostring(SavedConfig.FloatingToggleStyle or "Pill"),
+            "keybinds:" .. table.concat(keybindParts, ","),
             "time:" .. tostring(os.time()),
         }, "|")
         writefile(ConfigFile, configData)
@@ -693,6 +703,7 @@ local function LoadConfig()
         logoIcon = nil,
         platformMode = nil,
         floatStyle = nil,
+        keybinds = {},
     }
 
     pcall(function()
@@ -723,6 +734,13 @@ local function LoadConfig()
                         result.platformMode = value
                     elseif key == "floatStyle" then
                         result.floatStyle = value
+                    elseif key == "keybinds" then
+                        for pair in value:gmatch("([^,]+)") do
+                            local id, keyName = pair:match("^(.-)~([^~]+)$")
+                            if id and keyName and id ~= "" and keyName ~= "" then
+                                result.keybinds[id] = keyName
+                            end
+                        end
                     end
                 end
             end
@@ -1346,6 +1364,13 @@ local function LoadThemes()
 end
 
 LoadThemes()
+
+--// El tema inicial Dark debe arrancar negro incluso si el catálogo remoto
+--// entrega una variante antigua con Background gris. Solo se fuerza el fondo;
+--// el resto de la paleta remota permanece intacto.
+if ThemePalettes.Dark then
+    ThemePalettes.Dark.Background = Color3.fromRGB(0, 0, 0)
+end
 
 --// ════════════════════════════════════════════════════════════════
 --// TEMAS PERSONALIZADOS DEL USUARIO (persistencia local)
@@ -2222,6 +2247,9 @@ function YinYang:CreateWindow(title_text, startTheme)
         end
         if ConfigCargada.floatStyle then
             SavedConfig.FloatingToggleStyle = ConfigCargada.floatStyle
+        end
+        if ConfigCargada.keybinds then
+            SavedConfig.Keybinds = ConfigCargada.keybinds
         end
     end
 
@@ -3436,7 +3464,7 @@ function YinYang:CreateWindow(title_text, startTheme)
     local TabList = mk("ScrollingFrame", {
         Size = UDim2.new(0, 110, 1, 0),
         Position = UDim2.new(0, 0, 0, 0),
-        BackgroundColor3 = Theme.Secondary,
+        BackgroundColor3 = Theme.Background,
         BorderSizePixel = 0,
         ScrollBarThickness = 3,
         ElasticBehavior = Enum.ElasticBehavior.Never,
@@ -3444,7 +3472,7 @@ function YinYang:CreateWindow(title_text, startTheme)
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
         ZIndex = 7
     }, Body)
-    TabList:SetAttribute("ThemeRole", "Secondary")
+    TabList:SetAttribute("ThemeRole", "Background")
     corner(TabList, 10)
     --// Imagen decorativa en la barra de pestañas — ZIndex 6 (detrás de TabList)
     --// TabList.BackgroundTransparency se ajusta en SetTheme cuando hay imagen activa
@@ -3581,8 +3609,141 @@ function YinYang:CreateWindow(title_text, startTheme)
     Window.CurrentTheme = startTheme
     Window.AllThemes = ThemePalettes
     Window.FloatingToggles = {}
+    Window.Keybinds = {}
+    Window._keybindCapture = nil
     Window.ScreenGui = ScreenGui
     Window.BackgroundArt = BackgroundArt
+
+    local function keyNameToDisplay(keyName)
+        if type(keyName) ~= "string" or keyName == "" then
+            return GetText("Sin tecla", "No key")
+        end
+
+        local displayName = keyName
+        pcall(function()
+            local keyCode = Enum.KeyCode[keyName]
+            if keyCode then
+                local formatted = UserInputService:GetStringForKeyCode(
+                    keyCode,
+                    Enum.KeyCodeStringFormat.Short
+                )
+                if type(formatted) == "string" and formatted ~= "" then
+                    displayName = formatted
+                end
+            end
+        end)
+        return displayName
+    end
+
+    local function updateKeybindButton(entry)
+        if entry and entry.Button and entry.Button.Parent then
+            entry.Button.Text = GetText("Tecla: ", "Key: ") .. keyNameToDisplay(entry.KeyName)
+            entry.Button.TextColor3 = Theme.TextDim
+        end
+    end
+
+    Window.BeginKeybindCapture = function(entry)
+        if not entry or not entry.Button or not entry.Button.Parent then return end
+
+        if Window._keybindCapture and Window._keybindCapture ~= entry then
+            Window._keybindCapture.Capturing = false
+            updateKeybindButton(Window._keybindCapture)
+        end
+
+        entry.Capturing = true
+        Window._keybindCapture = entry
+        entry.Button.Text = GetText("Pulsa una tecla", "Press a key")
+        entry.Button.TextColor3 = Theme.AccentText
+    end
+
+    Window.RegisterKeybind = function(id, button, activate)
+        if type(id) ~= "string" or id == "" or not button or type(activate) ~= "function" then
+            return nil
+        end
+
+        local entry = Window.Keybinds[id] or {}
+        entry.Button = button
+        entry.Activate = activate
+        entry.KeyName = SavedConfig.Keybinds[id]
+        entry.Capturing = false
+
+        entry.Update = function()
+            updateKeybindButton(entry)
+        end
+
+        entry.SetKey = function(keyName)
+            if type(keyName) ~= "string" or keyName == "" then return end
+
+            --// Una tecla solo controla una opción dentro de esta ventana.
+            for otherId, other in pairs(Window.Keybinds) do
+                if otherId ~= id and other.KeyName == keyName then
+                    other.KeyName = nil
+                    SavedConfig.Keybinds[otherId] = nil
+                    if other.Update then other.Update() end
+                end
+            end
+
+            entry.KeyName = keyName
+            SavedConfig.Keybinds[id] = keyName
+            entry.Capturing = false
+            if Window._keybindCapture == entry then
+                Window._keybindCapture = nil
+            end
+            updateKeybindButton(entry)
+            SaveConfig()
+        end
+
+        entry.Clear = function()
+            entry.KeyName = nil
+            SavedConfig.Keybinds[id] = nil
+            entry.Capturing = false
+            if Window._keybindCapture == entry then
+                Window._keybindCapture = nil
+            end
+            updateKeybindButton(entry)
+            SaveConfig()
+        end
+
+        Window.Keybinds[id] = entry
+        updateKeybindButton(entry)
+        return entry
+    end
+
+    track(UserInputService.InputBegan:Connect(function(input, _gameProcessedEvent)
+        local capture = Window._keybindCapture
+        if capture then
+            if input.UserInputType == Enum.UserInputType.Keyboard then
+                if input.KeyCode == Enum.KeyCode.Escape then
+                    capture.Capturing = false
+                    Window._keybindCapture = nil
+                    updateKeybindButton(capture)
+                elseif input.KeyCode ~= Enum.KeyCode.Unknown then
+                    capture.SetKey(input.KeyCode.Name)
+                end
+            end
+            return
+        end
+
+        if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+        if input.KeyCode == Enum.KeyCode.Unknown then return end
+
+        local focusedTextBox = nil
+        pcall(function()
+            focusedTextBox = UserInputService:GetFocusedTextBox()
+        end)
+        if focusedTextBox then return end
+
+        local keyName = input.KeyCode.Name
+        for _, entry in pairs(Window.Keybinds) do
+            if entry.KeyName == keyName and type(entry.Activate) == "function" then
+                task.spawn(function()
+                    pcall(entry.Activate)
+                end)
+                break
+            end
+        end
+    end))
+
     pcall(function()
         Window.BackgroundVideo = mk("VideoFrame", {
             Name = "BackgroundVideo",
@@ -3610,8 +3771,8 @@ function YinYang:CreateWindow(title_text, startTheme)
     --// Campo de Window (no local suelto): mismo motivo que arriba.
     Window.ApplyFloatingStyle = function()
         local isCircleStyle = (SavedConfig.FloatingToggleStyle or "Pill") == "Circle"
-        local floatW = isCircleStyle and 76 or 200
-        local floatH = isCircleStyle and 76 or 36
+        local floatW = isCircleStyle and 64 or 200
+        local floatH = isCircleStyle and 64 or 36
 
         for _, floatData in ipairs(Window.FloatingToggles or {}) do
             local win = floatData and floatData.Window
@@ -3656,7 +3817,7 @@ function YinYang:CreateWindow(title_text, startTheme)
                 if label then
                     label.Size = isCircleStyle and UDim2.new(1, -24, 1, -24) or UDim2.new(1, -24, 1, 0)
                     label.Position = isCircleStyle and UDim2.new(0, 12, 0, 12) or UDim2.new(0, 12, 0, 0)
-                    label.TextSize = isCircleStyle and 12 or 21
+                    label.TextSize = isCircleStyle and 11 or 21
                     label.TextWrapped = isCircleStyle
                     label.TextTruncate = isCircleStyle and Enum.TextTruncate.None or Enum.TextTruncate.AtEnd
                 end
@@ -3776,7 +3937,7 @@ function YinYang:CreateWindow(title_text, startTheme)
         
         local TabButton = mk("TextButton", {
             Size = UDim2.new(1, 0, 0, 32),
-            BackgroundColor3 = Theme.AccentOff,
+            BackgroundColor3 = Theme.Background,
             Text = "",
             TextColor3 = Theme.Text,
             Font = Enum.Font.GothamBold,
@@ -3786,7 +3947,7 @@ function YinYang:CreateWindow(title_text, startTheme)
             ClipsDescendants = false,
             ZIndex = 8
         }, TabList)
-        TabButton:SetAttribute("ThemeRole", "AccentOff")
+        TabButton:SetAttribute("ThemeRole", "Background")
         -- El texto vive exclusivamente en TabNameLabel. El contenedor no
         -- recibe atributos lingüísticos para evitar renderizarlo dos veces.
         corner(TabButton, 6)
@@ -3862,7 +4023,7 @@ function YinYang:CreateWindow(title_text, startTheme)
             for _, t in pairs(Window.Tabs) do
                 t.Page.Visible = false
                 t.Button.TextColor3 = Theme.Text
-                t.Button.BackgroundColor3 = Theme.AccentOff
+                t.Button.BackgroundColor3 = Theme.Background
             end
             TabPage.Visible = true
             TabPage.CanvasPosition = Vector2.new(0, 0)
@@ -3950,11 +4111,15 @@ function YinYang:CreateWindow(title_text, startTheme)
             local HolderSwitch = tog.Switch
             local HolderClick  = tog.Click
 
+            --// Se reserva una segunda línea debajo de los controles externos.
+            Holder.Size = UDim2.new(1, 0, 0, 92)
+            HolderSwitch.Position = UDim2.new(1, -66, 0, 18)
+
             --// Botón Desprender — ↗ encima del toggle existente
             local DetachBtn = mk("TextButton", {
                 Parent = Holder,
                 Size = UDim2.new(0, 26, 0, 26),
-                Position = UDim2.new(1, -126, 0.5, -13),
+                Position = UDim2.new(1, -126, 0, 19),
                 BackgroundColor3 = Theme.Accent,
                 Text = "↗",
                 TextColor3 = Color3.fromRGB(0, 0, 0),
@@ -3968,7 +4133,7 @@ function YinYang:CreateWindow(title_text, startTheme)
             local PinBtn = mk("ImageButton", {
                 Parent = Holder,
                 Size = UDim2.new(0, 26, 0, 26),
-                Position = UDim2.new(1, -96, 0.5, -13),
+                Position = UDim2.new(1, -96, 0, 19),
                 BackgroundColor3 = Theme.Secondary,
                 Image = "rbxassetid://83537941312438",  -- candado abierto
                 ImageColor3 = Theme.Text,
@@ -3984,12 +4149,35 @@ function YinYang:CreateWindow(title_text, startTheme)
             local FavBtn = mk("ImageButton", {
                 Parent = Holder,
                 Size = UDim2.new(0, 32, 0, 32),
-                Position = UDim2.new(1, -162, 0.5, -16),
+                Position = UDim2.new(1, -162, 0, 16),
                 BackgroundTransparency = 1,
                 Image = isFavorite and "rbxassetid://113655648685815" or "rbxassetid://90877976276431",
                 ScaleType = Enum.ScaleType.Fit,
                 ZIndex = 15
             })
+
+            --// Botón de tecla: queda debajo de estrella, candado y desprender.
+            local KeybindBtn = mk("TextButton", {
+                Parent = Holder,
+                Size = UDim2.new(0, 118, 0, 20),
+                Position = UDim2.new(1, -126, 1, -24),
+                BackgroundColor3 = Theme.Secondary,
+                BackgroundTransparency = 0.12,
+                Text = GetText("Tecla: Sin tecla", "Key: No key"),
+                TextColor3 = Theme.TextDim,
+                Font = Enum.Font.GothamBold,
+                TextSize = 10,
+                TextXAlignment = Enum.TextXAlignment.Center,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                AutoButtonColor = false,
+                Active = true,
+                Selectable = false,
+                ZIndex = 15,
+            })
+            KeybindBtn:SetAttribute("ThemeRole", "Secondary")
+            KeybindBtn:SetAttribute("ThemeTextRole", "TextDim")
+            corner(KeybindBtn, 6)
+            stroke(KeybindBtn, Theme.Stroke, 1, 0.45)
 
             --// ⚠️ NO ELIMINAR — _linkedSliderRef debe estar ANTES de syncFavoriteRow
             --// LinkSlider lo setea, y syncFavoriteRow lo lee
@@ -4045,6 +4233,18 @@ function YinYang:CreateWindow(title_text, startTheme)
                 SyncFavoritesToConfig()
             end)
 
+            Window.RegisterKeybind(favId, KeybindBtn, function()
+                state = not state
+                tog.SetValue(state)
+                if favRow and favRow.SetValue then
+                    favRow.SetValue(state)
+                end
+                pcall(cb, state)
+            end)
+            KeybindBtn.MouseButton1Click:Connect(function()
+                Window.BeginKeybindCapture(Window.Keybinds[favId])
+            end)
+
             --// ════════════════════════════════════════════════════════════════
             --// ⚠️ NO ELIMINAR — Toggle:LinkSlider(slider)
             --// Vincula un Slider a este Toggle.
@@ -4080,8 +4280,8 @@ function YinYang:CreateWindow(title_text, startTheme)
                 --// Estilo elegido en Ajustes: "Pill" (actual) o "Circle" (nuevo, redondo)
                 local floatStyle    = SavedConfig.FloatingToggleStyle or "Pill"
                 local isCircleStyle = (floatStyle == "Circle")
-                local floatW = isCircleStyle and 76 or 200
-                local floatH = isCircleStyle and 76 or 36
+                local floatW = isCircleStyle and 64 or 200
+                local floatH = isCircleStyle and 64 or 36
 
                 --// GLOW EXTERIOR - invisible, solo para sincronía de posición
                 FloatingGlow = mk("Frame", {
@@ -4141,7 +4341,7 @@ function YinYang:CreateWindow(title_text, startTheme)
                     Text = displayText,
                     TextColor3 = Theme.Text,
                     Font = Enum.Font.GothamBlack,
-                    TextSize = isCircleStyle and 12 or 21,
+                    TextSize = isCircleStyle and 11 or 21,
                     TextWrapped = isCircleStyle,
                     TextXAlignment = Enum.TextXAlignment.Center,
                     TextYAlignment = Enum.TextYAlignment.Center,
