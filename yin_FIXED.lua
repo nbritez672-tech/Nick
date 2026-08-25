@@ -12430,7 +12430,7 @@ end
     SPage.ScrollBarThickness = 2
     SPage.ScrollingEnabled = true
 
-    local SPOTIFY_CATALOG_URL = "https://raw.githubusercontent.com/Yinyangzx/Yin-music/refs/heads/main/YinYang_Spotify_Catalog.lua"
+    local SPOTIFY_CATALOG_URL = "https://raw.githubusercontent.com/nbritez672-tech/Yin-music/refs/heads/main/YinYang_Spotify_Catalog.lua"
 
     local function asset(id)
         return "rbxassetid://" .. tostring(id)
@@ -14539,7 +14539,7 @@ if DEMO_ACTIVO then
     --// ========================================================
     --// PESTAÑA: SPOTIFY (CATÁLOGO REMOTO + CACHÉ LOCAL)
     --// Source of truth:
-    --// https://raw.githubusercontent.com/Yinyangzx/Yin-music/refs/heads/main/YinYang_Spotify_Catalog.lua
+    --// https://raw.githubusercontent.com/nbritez672-tech/Yin-music/refs/heads/main/YinYang_Spotify_Catalog.lua
     --// ========================================================
     local SpotifyTab = DemoUI:CreateTab("Spotify", "Spotify", "rbxassetid://133998910541098")
     local SpotifyPage = SpotifyTab.Page
@@ -14551,7 +14551,7 @@ if DEMO_ACTIVO then
     SpotifyPage.ScrollBarThickness = 2
     SpotifyPage.ScrollingEnabled = true
 
-    local SPOTIFY_CATALOG_URL = "https://raw.githubusercontent.com/Yinyangzx/Yin-music/refs/heads/main/YinYang_Spotify_Catalog.lua"
+    local SPOTIFY_CATALOG_URL = "https://raw.githubusercontent.com/nbritez672-tech/Yin-music/refs/heads/main/YinYang_Spotify_Catalog.lua"
 
     local function asset(id)
         return "rbxassetid://" .. tostring(id)
