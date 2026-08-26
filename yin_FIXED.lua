@@ -7920,6 +7920,336 @@ function YinYang:CreateWindow(title_text, startTheme)
         SortOrder = Enum.SortOrder.LayoutOrder,
     })
 
+    -- Selector visual de color: se abre desde cada muestra y mantiene Hex/RGB sincronizados.
+    local openThemeColorPicker = function() end
+    local ColorPickerOverlay = mk("Frame", {
+        Parent = Main,
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+        BackgroundTransparency = 0.28,
+        BorderSizePixel = 0,
+        Visible = false,
+        Active = true,
+        ZIndex = 260,
+    })
+    local ColorPickerPanel = mk("Frame", {
+        Parent = ColorPickerOverlay,
+        Size = UDim2.new(0.86, 0, 0.72, 0),
+        Position = UDim2.new(0.5, 0, 0.5, 0),
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = Theme.Background,
+        BorderSizePixel = 0,
+        ZIndex = 261,
+    })
+    ColorPickerPanel:SetAttribute("ThemeRole", "Background")
+    corner(ColorPickerPanel, 12)
+    stroke(ColorPickerPanel, Theme.Stroke, 1.4, 0.2)
+
+    local PickerTitle = mk("TextLabel", {
+        Parent = ColorPickerPanel,
+        Size = UDim2.new(1, -58, 0, 30),
+        Position = UDim2.new(0, 14, 0, 8),
+        BackgroundTransparency = 1,
+        Text = GetText("Selector de color", "Color picker"),
+        TextColor3 = Theme.Text,
+        TextSize = 15,
+        Font = Enum.Font.GothamBold,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 262,
+    })
+    PickerTitle:SetAttribute("ThemeTextRole", "Text")
+    PickerTitle:SetAttribute("TextSpanish", "Selector de color")
+    PickerTitle:SetAttribute("TextEnglish", "Color picker")
+
+    local PickerHint = mk("TextLabel", {
+        Parent = ColorPickerPanel,
+        Size = UDim2.new(1, -58, 0, 16),
+        Position = UDim2.new(0, 14, 0, 35),
+        BackgroundTransparency = 1,
+        Text = GetText("Toca el área para elegir saturación y brillo", "Tap the area to choose saturation and brightness"),
+        TextColor3 = Theme.TextDim,
+        TextSize = 9,
+        Font = Enum.Font.Gotham,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 262,
+    })
+    PickerHint:SetAttribute("ThemeTextRole", "TextDim")
+    PickerHint:SetAttribute("TextSpanish", "Toca el área para elegir saturación y brillo")
+    PickerHint:SetAttribute("TextEnglish", "Tap the area to choose saturation and brightness")
+
+    local PickerClose = mk("TextButton", {
+        Parent = ColorPickerPanel,
+        Size = UDim2.new(0, 30, 0, 30),
+        Position = UDim2.new(1, -38, 0, 8),
+        BackgroundColor3 = Theme.Secondary,
+        BorderSizePixel = 0,
+        Text = "×",
+        TextColor3 = Theme.Text,
+        TextSize = 21,
+        Font = Enum.Font.GothamBold,
+        ZIndex = 263,
+    })
+    PickerClose:SetAttribute("ThemeRole", "Secondary")
+    PickerClose:SetAttribute("ThemeTextRole", "Text")
+    corner(PickerClose, 8)
+
+    local PickerArea = mk("Frame", {
+        Parent = ColorPickerPanel,
+        Size = UDim2.new(0.49, -8, 0.48, 0),
+        Position = UDim2.new(0, 14, 0, 60),
+        BackgroundColor3 = Color3.fromHSV(0, 1, 1),
+        BorderSizePixel = 0,
+        Active = true,
+        ZIndex = 262,
+    })
+    corner(PickerArea, 8)
+    stroke(PickerArea, Theme.Stroke, 1, 0.36)
+    local WhiteLayer = mk("Frame", {
+        Parent = PickerArea,
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundColor3 = Color3.new(1, 1, 1),
+        BorderSizePixel = 0,
+        ZIndex = 263,
+    })
+    corner(WhiteLayer, 8)
+    local WhiteGradient = Instance.new("UIGradient")
+    WhiteGradient.Color = ColorSequence.new(Color3.new(1, 1, 1))
+    WhiteGradient.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    WhiteGradient.Parent = WhiteLayer
+    local BlackLayer = mk("Frame", {
+        Parent = WhiteLayer,
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundColor3 = Color3.new(0, 0, 0),
+        BorderSizePixel = 0,
+        ZIndex = 264,
+    })
+    corner(BlackLayer, 8)
+    local BlackGradient = Instance.new("UIGradient")
+    BlackGradient.Rotation = 90
+    BlackGradient.Color = ColorSequence.new(Color3.new(0, 0, 0))
+    BlackGradient.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 1),
+        NumberSequenceKeypoint.new(1, 0),
+    })
+    BlackGradient.Parent = BlackLayer
+    local SVHandle = mk("Frame", {
+        Parent = PickerArea,
+        Size = UDim2.new(0, 17, 0, 17),
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(1, 0, 0, 0),
+        BackgroundColor3 = Color3.fromRGB(8, 8, 8),
+        BorderSizePixel = 0,
+        ZIndex = 265,
+    })
+    corner(SVHandle, 20)
+    stroke(SVHandle, Color3.fromRGB(255, 255, 255), 2, 0)
+
+    local HueBar = mk("Frame", {
+        Parent = ColorPickerPanel,
+        Size = UDim2.new(0, 16, 0.48, 0),
+        Position = UDim2.new(0.51, 0, 0, 60),
+        BackgroundColor3 = Color3.fromRGB(255, 0, 0),
+        BorderSizePixel = 0,
+        Active = true,
+        ZIndex = 262,
+    })
+    corner(HueBar, 8)
+    local HueGradient = Instance.new("UIGradient")
+    HueGradient.Rotation = 90
+    HueGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 0, 0)),
+        ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
+        ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0, 255, 0)),
+        ColorSequenceKeypoint.new(0.50, Color3.fromRGB(0, 255, 255)),
+        ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0, 0, 255)),
+        ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255, 0, 255)),
+        ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 0, 0)),
+    })
+    HueGradient.Parent = HueBar
+    local HueHandle = mk("Frame", {
+        Parent = HueBar,
+        Size = UDim2.new(1, 8, 0, 5),
+        Position = UDim2.new(0.5, 0, 0, 0),
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+        BorderSizePixel = 0,
+        ZIndex = 265,
+    })
+    corner(HueHandle, 4)
+
+    local PickerPreview = mk("Frame", {
+        Parent = ColorPickerPanel,
+        Size = UDim2.new(0.42, -6, 0, 34),
+        Position = UDim2.new(0.57, -6, 0, 61),
+        BackgroundColor3 = Theme.Accent,
+        BorderSizePixel = 0,
+        ZIndex = 262,
+    })
+    corner(PickerPreview, 7)
+    stroke(PickerPreview, Theme.Stroke, 1, 0.34)
+
+    local function createPickerInput(labelSpanish, labelEnglish, yOffset)
+        local field = mk("TextBox", {
+            Parent = ColorPickerPanel,
+            Size = UDim2.new(0.42, -6, 0, 29),
+            Position = UDim2.new(0.57, -6, 0, yOffset),
+            BackgroundColor3 = Theme.Secondary,
+            BorderSizePixel = 0,
+            Text = "",
+            PlaceholderText = GetText(labelSpanish, labelEnglish),
+            PlaceholderColor3 = Theme.TextDim,
+            TextColor3 = Theme.Text,
+            TextSize = 11,
+            Font = Enum.Font.Code,
+            ClearTextOnFocus = false,
+            TextXAlignment = Enum.TextXAlignment.Center,
+            ZIndex = 262,
+        })
+        field:SetAttribute("ThemeRole", "Secondary")
+        field:SetAttribute("ThemeTextRole", "Text")
+        field:SetAttribute("PlaceholderSpanish", labelSpanish)
+        field:SetAttribute("PlaceholderEnglish", labelEnglish)
+        corner(field, 7)
+        return field
+    end
+    local PickerHex = createPickerInput("#RRGGBB · Hex", "#RRGGBB · Hex", 101)
+    local PickerRed = createPickerInput("Rojo", "Red", 136)
+    local PickerGreen = createPickerInput("Verde", "Green", 171)
+    local PickerBlue = createPickerInput("Azul", "Blue", 206)
+
+    local PickerCancel = mk("TextButton", {
+        Parent = ColorPickerPanel,
+        Size = UDim2.new(0.44, -4, 0, 34),
+        Position = UDim2.new(0, 14, 1, -45),
+        BackgroundColor3 = Theme.Secondary,
+        BorderSizePixel = 0,
+        Text = GetText("Cancelar", "Cancel"),
+        TextColor3 = Theme.Text,
+        TextSize = 12,
+        Font = Enum.Font.GothamBold,
+        ZIndex = 262,
+    })
+    PickerCancel:SetAttribute("ThemeRole", "Secondary")
+    PickerCancel:SetAttribute("ThemeTextRole", "Text")
+    PickerCancel:SetAttribute("TextSpanish", "Cancelar")
+    PickerCancel:SetAttribute("TextEnglish", "Cancel")
+    corner(PickerCancel, 8)
+    local PickerApply = mk("TextButton", {
+        Parent = ColorPickerPanel,
+        Size = UDim2.new(0.44, -4, 0, 34),
+        Position = UDim2.new(0.56, -10, 1, -45),
+        BackgroundColor3 = Theme.Accent,
+        BorderSizePixel = 0,
+        Text = GetText("Aplicar", "Apply"),
+        TextColor3 = Theme.AccentText,
+        TextSize = 12,
+        Font = Enum.Font.GothamBold,
+        ZIndex = 262,
+    })
+    PickerApply:SetAttribute("ThemeRole", "Accent")
+    PickerApply:SetAttribute("ThemeTextRole", "AccentText")
+    PickerApply:SetAttribute("TextSpanish", "Aplicar")
+    PickerApply:SetAttribute("TextEnglish", "Apply")
+    corner(PickerApply, 8)
+
+    local pickerTarget = nil
+    local pickerHue, pickerSaturation, pickerValue = 0, 0, 1
+    local draggingPicker, draggingHue = false, false
+    local function pickerColor()
+        return Color3.fromHSV(pickerHue, pickerSaturation, pickerValue)
+    end
+    local function refreshPicker()
+        local selected = pickerColor()
+        PickerArea.BackgroundColor3 = Color3.fromHSV(pickerHue, 1, 1)
+        PickerPreview.BackgroundColor3 = selected
+        SVHandle.Position = UDim2.new(pickerSaturation, 0, 1 - pickerValue, 0)
+        HueHandle.Position = UDim2.new(0.5, 0, pickerHue, 0)
+        PickerHex.Text = colorToHex(selected)
+        PickerRed.Text = tostring(math.floor(selected.R * 255 + 0.5))
+        PickerGreen.Text = tostring(math.floor(selected.G * 255 + 0.5))
+        PickerBlue.Text = tostring(math.floor(selected.B * 255 + 0.5))
+    end
+    local function setPickerColor(color)
+        pickerHue, pickerSaturation, pickerValue = color:ToHSV()
+        refreshPicker()
+    end
+    local function updateSVAt(position)
+        local size = PickerArea.AbsoluteSize
+        if size.X <= 0 or size.Y <= 0 then return end
+        local localPosition = position - PickerArea.AbsolutePosition
+        pickerSaturation = math.clamp(localPosition.X / size.X, 0, 1)
+        pickerValue = math.clamp(1 - localPosition.Y / size.Y, 0, 1)
+        refreshPicker()
+    end
+    local function updateHueAt(position)
+        local size = HueBar.AbsoluteSize
+        if size.Y <= 0 then return end
+        pickerHue = math.clamp((position.Y - HueBar.AbsolutePosition.Y) / size.Y, 0, 1)
+        refreshPicker()
+    end
+    local function closeColorPicker()
+        draggingPicker, draggingHue = false, false
+        ColorPickerOverlay.Visible = false
+        pickerTarget = nil
+    end
+    openThemeColorPicker = function(role)
+        local field = colorFields[role]
+        if not field then return end
+        local current = hexToColor(field.Box.Text) or field.Swatch.BackgroundColor3
+        pickerTarget = field
+        ColorPickerOverlay.Visible = true
+        task.defer(function()
+            if pickerTarget then setPickerColor(current) end
+        end)
+    end
+    PickerArea.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            draggingPicker = true
+            updateSVAt(input.Position)
+        end
+    end)
+    HueBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            draggingHue = true
+            updateHueAt(input.Position)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if draggingPicker and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then updateSVAt(input.Position) end
+        if draggingHue and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then updateHueAt(input.Position) end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then draggingPicker, draggingHue = false, false end
+    end)
+    PickerHex.FocusLost:Connect(function()
+        local color = hexToColor(PickerHex.Text)
+        if color then setPickerColor(color) else refreshPicker() end
+    end)
+    local function applyRGBFields()
+        local color = Color3.fromRGB(
+            math.clamp(tonumber(PickerRed.Text) or 0, 0, 255),
+            math.clamp(tonumber(PickerGreen.Text) or 0, 0, 255),
+            math.clamp(tonumber(PickerBlue.Text) or 0, 0, 255)
+        )
+        setPickerColor(color)
+    end
+    PickerRed.FocusLost:Connect(applyRGBFields)
+    PickerGreen.FocusLost:Connect(applyRGBFields)
+    PickerBlue.FocusLost:Connect(applyRGBFields)
+    PickerClose.MouseButton1Click:Connect(closeColorPicker)
+    PickerCancel.MouseButton1Click:Connect(closeColorPicker)
+    PickerApply.MouseButton1Click:Connect(function()
+        if pickerTarget then
+            local selected = pickerColor()
+            pickerTarget.Box.Text = colorToHex(selected)
+            pickerTarget.Swatch.BackgroundColor3 = selected
+        end
+        closeColorPicker()
+    end)
+
     for index, info in ipairs(colorRoles) do
         local cell = mk("Frame", {
             Parent = ColorGridHolder,
@@ -7948,6 +8278,7 @@ function YinYang:CreateWindow(title_text, startTheme)
         label:SetAttribute("TextSpanish", "[" .. info[2] .. "]")
         label:SetAttribute("TextEnglish", "[" .. info[3] .. "]")
 
+        local roleName = info[1]
         local swatch = mk("Frame", {
             Parent = cell,
             Size = UDim2.new(1, -12, 0, 30),
@@ -7958,6 +8289,18 @@ function YinYang:CreateWindow(title_text, startTheme)
         })
         corner(swatch, 4)
         stroke(swatch, Theme.Stroke, 1, 0.4)
+        local swatchTrigger = mk("TextButton", {
+            Parent = swatch,
+            Size = UDim2.new(1, 0, 1, 0),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Text = "",
+            AutoButtonColor = false,
+            ZIndex = 204,
+        })
+        swatchTrigger.MouseButton1Click:Connect(function()
+            openThemeColorPicker(roleName)
+        end)
 
         local box = mk("TextBox", {
             Parent = cell,
@@ -9226,6 +9569,7 @@ do
         ContactStrength = 0.24,
         ContactRig = nil,
         ContactParts = {},
+        ContactCore = nil,
         ContactElapsed = 0,
         ModelDetailEnabled = true,
         ModelApplied = {},
@@ -9327,7 +9671,7 @@ do
 
     function ShaderReflections:_clearContact()
         if self.ContactRig and self.ContactRig.Parent then pcall(function() self.ContactRig:Destroy() end) end
-        self.ContactRig, self.ContactParts = nil, {}
+        self.ContactRig, self.ContactParts, self.ContactCore = nil, {}, nil
     end
 
     function ShaderReflections:_clearSceneShadows()
@@ -9411,7 +9755,7 @@ do
         if not character or not root then return end
         local params = RaycastParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
-        params.FilterDescendantsInstances = {character}
+        params.FilterDescendantsInstances = {character, self.ContactRig}
         params.IgnoreWater = false
         local hit = workspace:Raycast(root.Position + Vector3.new(0, 2, 0), Vector3.new(0, -12, 0), params)
         if not hit or not hit.Instance or math.abs(hit.Normal.Y) < 0.28 then
@@ -9424,35 +9768,72 @@ do
             rig.Parent = workspace
             self.ContactRig, self.ContactParts = rig, {}
         end
+
+        local normal = hit.Normal
+        local right = root.CFrame.RightVector
+        if math.abs(right:Dot(normal)) > 0.92 then right = root.CFrame.LookVector end
+        local back = normal:Cross(right).Unit
+        right = back:Cross(normal).Unit
+        local groundDistance = (root.Position - hit.Position).Magnitude
+        local distanceFade = math.clamp(1 - math.max(0, groundDistance - 2.4) / 8.5, 0.18, 1)
+        local wetFactor = math.clamp((self.Intensity * self.Wetness) / 0.34, 0.42, 1)
+
+        if not self.ContactCore or not self.ContactCore.Parent then
+            local core = Instance.new("Part")
+            core.Name = "ContactReflectionCore"
+            core.Shape = Enum.PartType.Ball
+            core.Anchored, core.CanCollide, core.CanQuery, core.CanTouch, core.CastShadow = true, false, false, false, false
+            core.Material = Enum.Material.Glass
+            core.Parent = self.ContactRig
+            self.ContactCore = core
+        end
+        local extents = Vector3.new(3, 5, 2)
+        pcall(function() extents = character:GetExtentsSize() end)
+        self.ContactCore.Size = Vector3.new(
+            math.clamp(extents.X * 0.52, 0.90, 4.8),
+            0.026,
+            math.clamp(extents.Z * 0.52, 0.90, 4.8)
+        )
+        self.ContactCore.CFrame = CFrame.fromMatrix(hit.Position + normal * 0.019, right, normal, back)
+        self.ContactCore.Color = root.Color:Lerp(Color3.fromRGB(158, 198, 246), 0.46)
+        self.ContactCore.Transparency = math.clamp(0.95 - self.ContactStrength * 0.18 * wetFactor * distanceFade, 0.76, 0.93)
+
         local active, index = {}, 0
-        for _, source in ipairs(character:GetDescendants()) do
-            if source:IsA("BasePart") and source.Transparency < 0.95 then
-                index = index + 1
-                local proxy = self.ContactParts[source]
-                if not proxy or not proxy.Parent then
-                    proxy = Instance.new("Part")
-                    proxy.Name = "ContactReflection"
-                    proxy.Anchored, proxy.CanCollide, proxy.CanQuery, proxy.CanTouch, proxy.CastShadow = true, false, false, false, false
-                    proxy.Material = Enum.Material.Glass
-                    proxy.Parent = self.ContactRig
-                    self.ContactParts[source] = proxy
+        for _, sourcePart in ipairs(character:GetDescendants()) do
+            if sourcePart:IsA("BasePart") and sourcePart.Transparency < 0.95 and sourcePart.Name ~= "HumanoidRootPart" then
+                if index >= 18 then break end
+                local sourceHit = workspace:Raycast(sourcePart.Position + normal * 0.14, -normal * 9, params)
+                if sourceHit and sourceHit.Instance and math.abs(sourceHit.Normal.Y) >= 0.28 then
+                    index = index + 1
+                    local proxy = self.ContactParts[sourcePart]
+                    if not proxy or not proxy.Parent then
+                        proxy = Instance.new("Part")
+                        proxy.Name = "ContactReflection"
+                        proxy.Anchored, proxy.CanCollide, proxy.CanQuery, proxy.CanTouch, proxy.CastShadow = true, false, false, false, false
+                        proxy.Material = Enum.Material.Glass
+                        proxy.Parent = self.ContactRig
+                        self.ContactParts[sourcePart] = proxy
+                    end
+                    local sourceNormal = sourceHit.Normal
+                    local sourceRight = right
+                    if math.abs(sourceRight:Dot(sourceNormal)) > 0.92 then sourceRight = back end
+                    local sourceBack = sourceNormal:Cross(sourceRight).Unit
+                    sourceRight = sourceBack:Cross(sourceNormal).Unit
+                    local size = sourcePart.Size
+                    local partDistance = math.clamp((sourcePart.Position - sourceHit.Position).Magnitude, 0, 9)
+                    local partFade = math.clamp(1 - math.max(0, partDistance - 2) / 7, 0.20, 1)
+                    proxy.Size = Vector3.new(math.max(0.13, size.X * 0.78), 0.024, math.max(0.13, size.Z * 0.78))
+                    proxy.CFrame = CFrame.fromMatrix(sourceHit.Position + sourceNormal * (0.024 + index * 0.00014), sourceRight, sourceNormal, sourceBack)
+                    proxy.Color = sourcePart.Color:Lerp(Color3.fromRGB(174, 211, 255), 0.42)
+                    proxy.Transparency = math.clamp(0.93 - self.ContactStrength * 0.50 * wetFactor * partFade * distanceFade, 0.58, 0.89)
+                    active[sourcePart] = true
                 end
-                local size = source.Size
-                proxy.Size = Vector3.new(math.max(0.16, size.X * 0.70), 0.028, math.max(0.16, size.Z * 0.70))
-                local right = root.CFrame.RightVector
-                if math.abs(right:Dot(hit.Normal)) > 0.92 then right = root.CFrame.LookVector end
-                local back = hit.Normal:Cross(right).Unit
-                right = back:Cross(hit.Normal).Unit
-                proxy.CFrame = CFrame.fromMatrix(hit.Position + hit.Normal * (0.031 + index * 0.0002), right, hit.Normal, back)
-                proxy.Color = source.Color:Lerp(Color3.fromRGB(152, 191, 236), 0.58)
-                proxy.Transparency = math.clamp(0.88 - self.ContactStrength * 0.38, 0.58, 0.84)
-                active[source] = true
             end
         end
-        for source, proxy in pairs(self.ContactParts) do
-            if not active[source] then
+        for sourcePart, proxy in pairs(self.ContactParts) do
+            if not active[sourcePart] then
                 if proxy and proxy.Parent then proxy:Destroy() end
-                self.ContactParts[source] = nil
+                self.ContactParts[sourcePart] = nil
             end
         end
     end
@@ -9619,6 +10000,35 @@ do
                 self:Refresh()
             end
         end)
+    end
+
+    local ShaderSolarTone = {
+        Hue = 0.10,
+        Saturation = 0.38,
+        Strength = 0.42,
+    }
+
+    function ShaderSolarTone:Apply()
+        local tint = Color3.fromHSV(self.Hue, self.Saturation, 1)
+        local top = Color3.new(1, 1, 1):Lerp(tint, self.Strength)
+        local bottomBase = Color3.fromRGB(176, 194, 226)
+        local bottom = bottomBase:Lerp(tint, self.Strength * 0.44)
+        return ShaderManager:Apply({Lighting = {ColorShift_Top = top, ColorShift_Bottom = bottom}}, {tween = true, duration = 0.28})
+    end
+
+    function ShaderSolarTone:SetHue(value)
+        self.Hue = math.clamp(tonumber(value) or self.Hue, 0, 1)
+        return self:Apply()
+    end
+
+    function ShaderSolarTone:SetSaturation(value)
+        self.Saturation = math.clamp(tonumber(value) or self.Saturation, 0, 1)
+        return self:Apply()
+    end
+
+    function ShaderSolarTone:SetStrength(value)
+        self.Strength = math.clamp(tonumber(value) or self.Strength, 0, 1)
+        return self:Apply()
     end
 
     local ShaderManualLighting = {
@@ -9924,6 +10334,9 @@ do
                 modelDetail = ShaderReflections.ModelDetailEnabled == true,
                 modelShadows = ShaderReflections.ShadowEnabled == true,
                 shadowStrength = ShaderReflections.ShadowStrength,
+                sunHue = ShaderSolarTone.Hue,
+                sunSaturation = ShaderSolarTone.Saturation,
+                sunStrength = ShaderSolarTone.Strength,
                 rain = ShaderRain.Enabled == true,
                 rainIntensity = ShaderRain.Intensity,
                 rainAudio = ShaderRain.SoundEnabled == true,
@@ -10675,7 +11088,10 @@ do
             {id = "DepthNearIntensity", es = "Intensidad cercana", en = "Near intensity", min = 0, max = 1, default = 0.06, step = 0.01, target = "DepthOfFieldEffect", property = "NearIntensity"},
             {id = "DepthEnabled", es = "DepthOfField activo", en = "DepthOfField enabled", default = false, target = "DepthOfFieldEffect", property = "Enabled", toggle = true},
 
-            {section = {"SunRays", "SunRays", "Rayos solares y atmósfera luminosa.", "Sun rays and luminous atmosphere."}},
+            {section = {"SunRays", "SunRays", "Rayos solares, tono y atmósfera luminosa.", "Sun rays, tone and luminous atmosphere."}},
+            {id = "SunColorHue", es = "Color del sol · tono", en = "Sun color · hue", min = 0, max = 1, default = 0.10, step = 0.01, target = "Lighting", property = "ColorShift_Top", getValue = function() return ShaderSolarTone.Hue end, onChange = function(value) ShaderSolarTone:SetHue(value) end},
+            {id = "SunColorSaturation", es = "Color del sol · saturación", en = "Sun color · saturation", min = 0, max = 1, default = 0.38, step = 0.01, target = "Lighting", property = "ColorShift_Top", getValue = function() return ShaderSolarTone.Saturation end, onChange = function(value) ShaderSolarTone:SetSaturation(value) end},
+            {id = "SunColorStrength", es = "Color del sol · mezcla", en = "Sun color · blend", min = 0, max = 1, default = 0.42, step = 0.01, target = "Lighting", property = "ColorShift_Top", getValue = function() return ShaderSolarTone.Strength end, onChange = function(value) ShaderSolarTone:SetStrength(value) end},
             {id = "SunRaysIntensity", es = "Intensidad", en = "Intensity", min = 0, max = 1, default = 0.08, step = 0.01, target = "SunRaysEffect", property = "Intensity"},
             {id = "SunRaysSpread", es = "Extensión", en = "Spread", min = 0, max = 1, default = 0.65, step = 0.01, target = "SunRaysEffect", property = "Spread"},
             {id = "SunRaysEnabled", es = "SunRays activo", en = "SunRays enabled", default = false, target = "SunRaysEffect", property = "Enabled", toggle = true},
@@ -11007,6 +11423,10 @@ do
             if type(overdrive.modelDetail) == "boolean" then ShaderReflections:SetModelDetailEnabled(overdrive.modelDetail) end
             if type(overdrive.modelShadows) == "boolean" then ShaderReflections:SetShadowEnabled(overdrive.modelShadows) end
             if type(overdrive.shadowStrength) == "number" then ShaderReflections:SetShadowStrength(overdrive.shadowStrength) end
+            if type(overdrive.sunHue) == "number" then ShaderSolarTone.Hue = math.clamp(overdrive.sunHue, 0, 1) end
+            if type(overdrive.sunSaturation) == "number" then ShaderSolarTone.Saturation = math.clamp(overdrive.sunSaturation, 0, 1) end
+            if type(overdrive.sunStrength) == "number" then ShaderSolarTone.Strength = math.clamp(overdrive.sunStrength, 0, 1) end
+            if type(overdrive.sunHue) == "number" or type(overdrive.sunSaturation) == "number" or type(overdrive.sunStrength) == "number" then ShaderSolarTone:Apply() end
             if type(overdrive.wetReflections) == "boolean" then ShaderReflections:SetEnabled(overdrive.wetReflections) end
             if type(overdrive.contact) == "boolean" then ShaderReflections:SetContactEnabled(overdrive.contact) end
             if type(overdrive.rainIntensity) == "number" then ShaderRain:SetIntensity(overdrive.rainIntensity) end
@@ -11228,6 +11648,9 @@ do
                 SetModelDetailEnabled = function(value) ShaderReflections:SetModelDetailEnabled(value) end,
                 SetShadowEnabled = function(value) ShaderReflections:SetShadowEnabled(value) end,
                 SetShadowStrength = function(value) ShaderReflections:SetShadowStrength(value) end,
+                SetSunHue = function(value) ShaderSolarTone:SetHue(value) end,
+                SetSunSaturation = function(value) ShaderSolarTone:SetSaturation(value) end,
+                SetSunStrength = function(value) ShaderSolarTone:SetStrength(value) end,
                 Refresh = function() ShaderReflections:Refresh() end,
                 IsEnabled = function() return ShaderReflections.Enabled end,
             },
