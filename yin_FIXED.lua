@@ -14430,16 +14430,28 @@ end
     --// Panel público: este es el menú abierto por el icono de tres puntos junto a la portada.
     local PlaybackSettingsMenu = mk("Frame", {
         Parent = NowPlayingCard,
-        Size = UDim2.fromOffset(226, 162),
-        Position = UDim2.new(1, -240, 0, 38),
-        BackgroundColor3 = Color3.fromRGB(8, 8, 10),
-        BackgroundTransparency = 0.04,
+        Size = UDim2.fromOffset(236, 170),
+        Position = UDim2.new(1, -250, 0, 38),
+        BackgroundColor3 = Theme.Secondary,
+        BackgroundTransparency = 0.08,
         BorderSizePixel = 0,
         Visible = false,
         ZIndex = 40,
     })
-    corner(PlaybackSettingsMenu, 14)
-    stroke(PlaybackSettingsMenu, spotifyGreen, 1.1, 0.22)
+    PlaybackSettingsMenu:SetAttribute("ThemeRole", "Secondary")
+    corner(PlaybackSettingsMenu, 16)
+    local PlaybackMenuStroke = stroke(PlaybackSettingsMenu, Theme.Accent, 1.2, 0.38)
+    PlaybackMenuStroke:SetAttribute("ThemeRole", "Accent")
+    local PlaybackMenuAccent = mk("Frame", {
+        Parent = PlaybackSettingsMenu,
+        Size = UDim2.new(0, 42, 0, 3),
+        Position = UDim2.new(0, 14, 0, 34),
+        BackgroundColor3 = Theme.Accent,
+        BorderSizePixel = 0,
+        ZIndex = 41,
+    })
+    PlaybackMenuAccent:SetAttribute("ThemeRole", "Accent")
+    corner(PlaybackMenuAccent, 99)
 
     mk("TextLabel", {
         Parent = PlaybackSettingsMenu,
@@ -14485,8 +14497,8 @@ end
             Parent = PlaybackSettingsMenu,
             Size = UDim2.fromOffset(26, 24),
             Position = UDim2.new(1, -120, 0, top - 1),
-            BackgroundColor3 = Color3.fromRGB(44, 44, 48),
-            BackgroundTransparency = 0.16,
+            BackgroundColor3 = Theme.Background,
+            BackgroundTransparency = 0.10,
             Text = "−", TextColor3 = spotifyText, Font = Enum.Font.GothamBlack, TextSize = 15,
             AutoButtonColor = false, ZIndex = 42,
         })
@@ -14494,20 +14506,23 @@ end
             Parent = PlaybackSettingsMenu,
             Size = UDim2.fromOffset(52, 24),
             Position = UDim2.new(1, -90, 0, top - 1),
-            BackgroundColor3 = Color3.fromRGB(30, 30, 34),
-            BackgroundTransparency = 0.10,
+            BackgroundColor3 = Theme.Background,
+            BackgroundTransparency = 0.03,
             Text = "", TextColor3 = spotifyText, Font = Enum.Font.GothamBold, TextSize = 10, ZIndex = 42,
         })
         local plus = mk("TextButton", {
             Parent = PlaybackSettingsMenu,
             Size = UDim2.fromOffset(26, 24),
             Position = UDim2.new(1, -34, 0, top - 1),
-            BackgroundColor3 = Color3.fromRGB(44, 44, 48),
-            BackgroundTransparency = 0.16,
+            BackgroundColor3 = Theme.Background,
+            BackgroundTransparency = 0.10,
             Text = "+", TextColor3 = spotifyText, Font = Enum.Font.GothamBlack, TextSize = 15,
             AutoButtonColor = false, ZIndex = 42,
         })
-        corner(minus, 7); corner(value, 7); corner(plus, 7)
+        minus:SetAttribute("ThemeRole", "Background"); minus:SetAttribute("ThemeTextRole", "Text")
+        value:SetAttribute("ThemeRole", "Background"); value:SetAttribute("ThemeTextRole", "Text")
+        plus:SetAttribute("ThemeRole", "Background"); plus:SetAttribute("ThemeTextRole", "Text")
+        corner(minus, 8); corner(value, 8); corner(plus, 8)
         minus.Activated:Connect(minusAction)
         plus.Activated:Connect(plusAction)
         return value
@@ -14529,12 +14544,14 @@ end
         Parent = PlaybackSettingsMenu,
         Size = UDim2.new(1, -28, 0, 30),
         Position = UDim2.new(0, 14, 1, -40),
-        BackgroundColor3 = Color3.fromRGB(38, 38, 42),
-        BackgroundTransparency = 0.10,
+        BackgroundColor3 = Theme.Background,
+        BackgroundTransparency = 0.04,
         Text = "", TextColor3 = spotifyText, Font = Enum.Font.GothamBold, TextSize = 10,
         AutoButtonColor = false, ZIndex = 41,
     })
-    corner(FloatingToggle, 9)
+    FloatingToggle:SetAttribute("ThemeRole", "Background")
+    FloatingToggle:SetAttribute("ThemeTextRole", "Text")
+    corner(FloatingToggle, 10)
 
     local FloatingPlayer = nil
     local FloatCover, FloatFallback, FloatTitle, FloatArtist, FloatProgress, FloatTime, FloatLike, FloatPlay, FloatStatus
@@ -14581,74 +14598,86 @@ end
         if FloatingPlayer and FloatingPlayer.Parent then return end
         FloatingPlayer = mk("Frame", {
             Parent = Window.ScreenGui,
-            Size = UDim2.fromOffset(350, 172), Position = UDim2.new(0.5, -175, 0.72, 0),
-            BackgroundColor3 = Color3.fromRGB(7, 7, 9), BackgroundTransparency = 0.03,
+            Size = UDim2.fromOffset(304, 146), Position = UDim2.new(0.5, -152, 0.72, 0),
+            BackgroundColor3 = Theme.Secondary, BackgroundTransparency = 0.06,
             BorderSizePixel = 0, ClipsDescendants = true, Visible = SpotifyState.FloatingPlayerVisible,
             Active = true, ZIndex = 520,
         })
-        corner(FloatingPlayer, 22); stroke(FloatingPlayer, spotifyGreen, 1.3, 0.27)
+        FloatingPlayer:SetAttribute("ThemeRole", "Secondary")
+        corner(FloatingPlayer, 18)
+        local FloatingStroke = stroke(FloatingPlayer, Theme.Accent, 1.15, 0.42)
+        FloatingStroke:SetAttribute("ThemeRole", "Accent")
         local Drag = mk("TextButton", {
-            Parent = FloatingPlayer, Size = UDim2.new(1, -52, 0, 30), Position = UDim2.new(0, 14, 0, 0),
-            BackgroundTransparency = 1, Text = "MÚSICA  ·  mantener y arrastrar", TextColor3 = spotifyDim,
-            Font = Enum.Font.GothamBold, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false, ZIndex = 522,
+            Parent = FloatingPlayer, Size = UDim2.new(1, -46, 0, 25), Position = UDim2.new(0, 12, 0, 0),
+            BackgroundTransparency = 1, Text = "MÚSICA  ·  ARRASTRA", TextColor3 = spotifyDim,
+            Font = Enum.Font.GothamBold, TextSize = 8, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false, ZIndex = 522,
         })
         local Close = mk("TextButton", {
-            Parent = FloatingPlayer, Size = UDim2.fromOffset(24, 24), Position = UDim2.new(1, -35, 0, 4),
-            BackgroundColor3 = Color3.fromRGB(42, 42, 46), BackgroundTransparency = 0.18,
-            Text = "×", TextColor3 = spotifyText, Font = Enum.Font.GothamBlack, TextSize = 17, AutoButtonColor = false, ZIndex = 523,
+            Parent = FloatingPlayer, Size = UDim2.fromOffset(22, 22), Position = UDim2.new(1, -31, 0, 3),
+            BackgroundColor3 = Theme.Background, BackgroundTransparency = 0.10,
+            Text = "×", TextColor3 = spotifyText, Font = Enum.Font.GothamBlack, TextSize = 15, AutoButtonColor = false, ZIndex = 523,
         })
-        corner(Close, 8)
+        Close:SetAttribute("ThemeRole", "Background"); Close:SetAttribute("ThemeTextRole", "Text")
+        corner(Close, 7)
         FloatCover = mk("ImageLabel", {
-            Parent = FloatingPlayer, Size = UDim2.fromOffset(54, 54), Position = UDim2.new(0, 14, 0, 38),
-            BackgroundColor3 = Color3.fromRGB(24, 24, 28), BackgroundTransparency = 0.10, BorderSizePixel = 0,
+            Parent = FloatingPlayer, Size = UDim2.fromOffset(46, 46), Position = UDim2.new(0, 12, 0, 30),
+            BackgroundColor3 = Theme.Background, BackgroundTransparency = 0.06, BorderSizePixel = 0,
             Image = "", ScaleType = Enum.ScaleType.Crop, ZIndex = 522,
         })
-        corner(FloatCover, 12); stroke(FloatCover, spotifyGreen, 1, 0.38)
+        FloatCover:SetAttribute("ThemeRole", "Background")
+        corner(FloatCover, 11)
+        local FloatCoverStroke = stroke(FloatCover, Theme.Accent, 1, 0.46)
+        FloatCoverStroke:SetAttribute("ThemeRole", "Accent")
         FloatFallback = mk("TextLabel", {
             Parent = FloatCover, Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
-            Text = "♪", TextColor3 = spotifyGreen, Font = Enum.Font.GothamBlack, TextSize = 24, ZIndex = 523,
+            Text = "♪", TextColor3 = Theme.Accent, Font = Enum.Font.GothamBlack, TextSize = 21, ZIndex = 523,
         })
+        FloatFallback:SetAttribute("ThemeTextRole", "Accent")
         FloatTitle = mk("TextLabel", {
-            Parent = FloatingPlayer, Size = UDim2.new(1, -104, 0, 21), Position = UDim2.new(0, 80, 0, 42),
+            Parent = FloatingPlayer, Size = UDim2.new(1, -82, 0, 18), Position = UDim2.new(0, 68, 0, 34),
             BackgroundTransparency = 1, Text = "Selecciona una canción", TextColor3 = spotifyText, Font = Enum.Font.GothamBold,
-            TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 522,
+            TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 522,
         })
         FloatArtist = mk("TextLabel", {
-            Parent = FloatingPlayer, Size = UDim2.new(1, -104, 0, 18), Position = UDim2.new(0, 80, 0, 64),
+            Parent = FloatingPlayer, Size = UDim2.new(1, -82, 0, 16), Position = UDim2.new(0, 68, 0, 53),
             BackgroundTransparency = 1, Text = "Spotify", TextColor3 = spotifyDim, Font = Enum.Font.Gotham,
-            TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 522,
+            TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 522,
         })
         local ProgressTrack = mk("Frame", {
-            Parent = FloatingPlayer, Size = UDim2.new(1, -28, 0, 5), Position = UDim2.new(0, 14, 0, 104),
-            BackgroundColor3 = Color3.fromRGB(64, 64, 68), BorderSizePixel = 0, ZIndex = 522,
+            Parent = FloatingPlayer, Size = UDim2.new(1, -24, 0, 4), Position = UDim2.new(0, 12, 0, 82),
+            BackgroundColor3 = Theme.Background, BorderSizePixel = 0, ZIndex = 522,
         })
+        ProgressTrack:SetAttribute("ThemeRole", "Background")
         corner(ProgressTrack, 99)
         FloatProgress = mk("Frame", {
-            Parent = ProgressTrack, Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = spotifyGreen, BorderSizePixel = 0, ZIndex = 523,
+            Parent = ProgressTrack, Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = Theme.Accent, BorderSizePixel = 0, ZIndex = 523,
         })
+        FloatProgress:SetAttribute("ThemeRole", "Accent")
         corner(FloatProgress, 99)
         FloatTime = mk("TextLabel", {
-            Parent = FloatingPlayer, Size = UDim2.new(1, -28, 0, 14), Position = UDim2.new(0, 14, 0, 111),
+            Parent = FloatingPlayer, Size = UDim2.new(1, -24, 0, 12), Position = UDim2.new(0, 12, 0, 88),
             BackgroundTransparency = 1, Text = "0:00 / 0:00", TextColor3 = spotifyDim, Font = Enum.Font.GothamMedium,
-            TextSize = 9, TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 522,
+            TextSize = 8, TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 522,
         })
         local function control(text, x, width)
             local button = mk("TextButton", {
-                Parent = FloatingPlayer, Size = UDim2.fromOffset(width, 30), Position = UDim2.new(0, x, 1, -39),
-                BackgroundColor3 = Color3.fromRGB(36, 36, 40), BackgroundTransparency = 0.10,
-                Text = text, TextColor3 = spotifyText, Font = Enum.Font.GothamBlack, TextSize = 15, AutoButtonColor = false, ZIndex = 522,
+                Parent = FloatingPlayer, Size = UDim2.fromOffset(width, 26), Position = UDim2.new(0, x, 1, -33),
+                BackgroundColor3 = Theme.Background, BackgroundTransparency = 0.06,
+                Text = text, TextColor3 = spotifyText, Font = Enum.Font.GothamBlack, TextSize = 13, AutoButtonColor = false, ZIndex = 522,
             })
-            corner(button, 9); return button
+            button:SetAttribute("ThemeRole", "Background"); button:SetAttribute("ThemeTextRole", "Text")
+            corner(button, 8); return button
         end
-        FloatLike = control("☆", 14, 42)
-        local Previous = control("‹‹", 66, 50)
-        FloatPlay = control("▶", 126, 50)
-        local Next = control("››", 186, 50)
+        FloatLike = control("☆", 12, 30)
+        local Previous = control("‹‹", 49, 38)
+        FloatPlay = control("▶", 94, 38)
+        local Next = control("››", 139, 38)
         FloatStatus = mk("TextLabel", {
-            Parent = FloatingPlayer, Size = UDim2.fromOffset(90, 30), Position = UDim2.new(1, -104, 1, -39),
-            BackgroundTransparency = 1, Text = "", TextColor3 = spotifyGreen, Font = Enum.Font.GothamBold,
-            TextSize = 9, TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 522,
+            Parent = FloatingPlayer, Size = UDim2.fromOffset(102, 26), Position = UDim2.new(1, -114, 1, -33),
+            BackgroundTransparency = 1, Text = "", TextColor3 = Theme.Accent, Font = Enum.Font.GothamBold,
+            TextSize = 8, TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 522,
         })
+        FloatStatus:SetAttribute("ThemeTextRole", "Accent")
         Close.Activated:Connect(function() setFloatingVisible(false) end)
         FloatLike.Activated:Connect(function() if SpotifyState.Catalog[SpotifyState.SelectedIndex] then toggleTrackLike(SpotifyState.SelectedIndex) end end)
         Previous.Activated:Connect(previousTrack); FloatPlay.Activated:Connect(togglePlayback); Next.Activated:Connect(nextTrack)
@@ -14673,8 +14702,8 @@ end
         VolumeValue.Text = string.format("%d%%", math.floor((SpotifyState.PlaybackVolume * 100) + 0.5))
         SpeedValue.Text = string.format("%.2fx", SpotifyState.PlaybackSpeed)
         FloatingToggle.Text = SpotifyState.FloatingPlayerVisible and "Reproductor flotante  •  ACTIVO" or "Reproductor flotante  •  ABRIR"
-        FloatingToggle.BackgroundColor3 = SpotifyState.FloatingPlayerVisible and spotifyGreen or Color3.fromRGB(38, 38, 42)
-        FloatingToggle.TextColor3 = SpotifyState.FloatingPlayerVisible and Color3.fromRGB(0, 0, 0) or spotifyText
+        FloatingToggle.BackgroundColor3 = SpotifyState.FloatingPlayerVisible and Theme.Accent or Theme.Background
+        FloatingToggle.TextColor3 = SpotifyState.FloatingPlayerVisible and getContrastColor(Theme.Accent) or spotifyText
     end
     refreshSpotifyFloatingPlayer = function()
         if not FloatingPlayer or not FloatingPlayer.Parent then return end
@@ -14689,7 +14718,7 @@ end
         FloatProgress.Size = UDim2.new(clamp(current / total, 0, 1), 0, 1, 0)
         FloatTime.Text = secondsToClock(current) .. " / " .. (currentTrack.Duration or secondsToClock(total))
         FloatPlay.Text = SpotifyState.IsPlaying and "Ⅱ" or "▶"; FloatLike.Text = isLiked(SpotifyState.SelectedIndex) and "★" or "☆"
-        FloatLike.TextColor3 = isLiked(SpotifyState.SelectedIndex) and spotifyGreen or spotifyText
+        FloatLike.TextColor3 = isLiked(SpotifyState.SelectedIndex) and Theme.Accent or spotifyText
         FloatStatus.Text = string.format("%d%% · %.2fx", math.floor((SpotifyState.PlaybackVolume * 100) + 0.5), SpotifyState.PlaybackSpeed)
     end
     local function openPlaybackMenu()
