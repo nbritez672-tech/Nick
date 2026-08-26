@@ -13265,7 +13265,14 @@ end
         CurrentPausedPosition = 0,
         CatalogLoaded = false,
         SearchQuery = "",
+        PlaybackVolume = 0.75,
+        PlaybackSpeed = 1,
+        SettingsMenuVisible = false,
+        FloatingPlayerVisible = false,
     }
+
+    local refreshSpotifyFloatingPlayer = function() end
+    local refreshSpotifyPlaybackMenu = function() end
 
     local function getRenderOrder()
         local order = {}
@@ -14220,6 +14227,7 @@ end
         end
 
         refreshAllRows()
+        refreshSpotifyFloatingPlayer()
     end
 
     local function destroyCurrentSound()
@@ -14261,6 +14269,7 @@ end
         else
             LikeBtn.Image = asset(82989818174730)
         end
+        refreshSpotifyFloatingPlayer()
     end
 
     local function updateProgress(track, sound)
@@ -14278,6 +14287,7 @@ end
         ProgressTimeLeft.Text = secondsToClock(current)
         ProgressTimeRight.Text = track and track.Duration or secondsToClock(total)
         ProgressFill.Size = UDim2.new(clamp(current / total, 0, 1), 0, 1, 0)
+        refreshSpotifyFloatingPlayer()
     end
 
     local function ensureTrackCached(track)
@@ -14351,7 +14361,8 @@ end
         local sound = Instance.new("Sound")
         sound.Name = "YY_Spotify_CurrentSound"
         sound.SoundId = soundAsset
-        sound.Volume = 0.75
+        sound.Volume = SpotifyState.PlaybackVolume
+        sound.PlaybackSpeed = SpotifyState.PlaybackSpeed
         sound.Looped = SpotifyState.IsRepeat
         sound.Parent = workspace
 
@@ -14415,6 +14426,285 @@ end
         renderSongRows()
         syncPlaybackUI()
     end
+
+    --// Panel público: este es el menú abierto por el icono de tres puntos junto a la portada.
+    local PlaybackSettingsMenu = mk("Frame", {
+        Parent = NowPlayingCard,
+        Size = UDim2.fromOffset(226, 162),
+        Position = UDim2.new(1, -240, 0, 38),
+        BackgroundColor3 = Color3.fromRGB(8, 8, 10),
+        BackgroundTransparency = 0.04,
+        BorderSizePixel = 0,
+        Visible = false,
+        ZIndex = 40,
+    })
+    corner(PlaybackSettingsMenu, 14)
+    stroke(PlaybackSettingsMenu, spotifyGreen, 1.1, 0.22)
+
+    mk("TextLabel", {
+        Parent = PlaybackSettingsMenu,
+        Size = UDim2.new(1, -50, 0, 24),
+        Position = UDim2.new(0, 14, 0, 8),
+        BackgroundTransparency = 1,
+        Text = "Ajustes de reproducción",
+        TextColor3 = spotifyText,
+        Font = Enum.Font.GothamBold,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 41,
+    })
+    local SettingsClose = mk("TextButton", {
+        Parent = PlaybackSettingsMenu,
+        Size = UDim2.fromOffset(24, 24),
+        Position = UDim2.new(1, -34, 0, 8),
+        BackgroundColor3 = Color3.fromRGB(42, 42, 46),
+        BackgroundTransparency = 0.18,
+        Text = "×",
+        TextColor3 = spotifyText,
+        Font = Enum.Font.GothamBlack,
+        TextSize = 17,
+        AutoButtonColor = false,
+        ZIndex = 42,
+    })
+    corner(SettingsClose, 8)
+
+    local function createAdjuster(label, top, minusAction, plusAction)
+        mk("TextLabel", {
+            Parent = PlaybackSettingsMenu,
+            Size = UDim2.new(0, 78, 0, 22),
+            Position = UDim2.new(0, 14, 0, top),
+            BackgroundTransparency = 1,
+            Text = label,
+            TextColor3 = spotifyDim,
+            Font = Enum.Font.GothamMedium,
+            TextSize = 10,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 41,
+        })
+        local minus = mk("TextButton", {
+            Parent = PlaybackSettingsMenu,
+            Size = UDim2.fromOffset(26, 24),
+            Position = UDim2.new(1, -120, 0, top - 1),
+            BackgroundColor3 = Color3.fromRGB(44, 44, 48),
+            BackgroundTransparency = 0.16,
+            Text = "−", TextColor3 = spotifyText, Font = Enum.Font.GothamBlack, TextSize = 15,
+            AutoButtonColor = false, ZIndex = 42,
+        })
+        local value = mk("TextLabel", {
+            Parent = PlaybackSettingsMenu,
+            Size = UDim2.fromOffset(52, 24),
+            Position = UDim2.new(1, -90, 0, top - 1),
+            BackgroundColor3 = Color3.fromRGB(30, 30, 34),
+            BackgroundTransparency = 0.10,
+            Text = "", TextColor3 = spotifyText, Font = Enum.Font.GothamBold, TextSize = 10, ZIndex = 42,
+        })
+        local plus = mk("TextButton", {
+            Parent = PlaybackSettingsMenu,
+            Size = UDim2.fromOffset(26, 24),
+            Position = UDim2.new(1, -34, 0, top - 1),
+            BackgroundColor3 = Color3.fromRGB(44, 44, 48),
+            BackgroundTransparency = 0.16,
+            Text = "+", TextColor3 = spotifyText, Font = Enum.Font.GothamBlack, TextSize = 15,
+            AutoButtonColor = false, ZIndex = 42,
+        })
+        corner(minus, 7); corner(value, 7); corner(plus, 7)
+        minus.Activated:Connect(minusAction)
+        plus.Activated:Connect(plusAction)
+        return value
+    end
+
+    local function applyPlaybackVolume(delta)
+        SpotifyState.PlaybackVolume = clamp(SpotifyState.PlaybackVolume + delta, 0, 1)
+        if SpotifyState.CurrentSound then pcall(function() SpotifyState.CurrentSound.Volume = SpotifyState.PlaybackVolume end) end
+        refreshSpotifyPlaybackMenu(); refreshSpotifyFloatingPlayer()
+    end
+    local function applyPlaybackSpeed(delta)
+        SpotifyState.PlaybackSpeed = clamp(SpotifyState.PlaybackSpeed + delta, 0.50, 2)
+        if SpotifyState.CurrentSound then pcall(function() SpotifyState.CurrentSound.PlaybackSpeed = SpotifyState.PlaybackSpeed end) end
+        refreshSpotifyPlaybackMenu(); refreshSpotifyFloatingPlayer()
+    end
+    local VolumeValue = createAdjuster("Volumen", 43, function() applyPlaybackVolume(-0.05) end, function() applyPlaybackVolume(0.05) end)
+    local SpeedValue = createAdjuster("Velocidad", 76, function() applyPlaybackSpeed(-0.05) end, function() applyPlaybackSpeed(0.05) end)
+    local FloatingToggle = mk("TextButton", {
+        Parent = PlaybackSettingsMenu,
+        Size = UDim2.new(1, -28, 0, 30),
+        Position = UDim2.new(0, 14, 1, -40),
+        BackgroundColor3 = Color3.fromRGB(38, 38, 42),
+        BackgroundTransparency = 0.10,
+        Text = "", TextColor3 = spotifyText, Font = Enum.Font.GothamBold, TextSize = 10,
+        AutoButtonColor = false, ZIndex = 41,
+    })
+    corner(FloatingToggle, 9)
+
+    local FloatingPlayer = nil
+    local FloatCover, FloatFallback, FloatTitle, FloatArtist, FloatProgress, FloatTime, FloatLike, FloatPlay, FloatStatus
+    local function previousTrack()
+        if #SpotifyState.Catalog == 0 then return end
+        local index = SpotifyState.SelectedIndex - 1
+        if index < 1 then index = #SpotifyState.Catalog end
+        playTrack(index)
+    end
+    local function nextTrack()
+        if #SpotifyState.Catalog == 0 then return end
+        local index = SpotifyState.SelectedIndex + 1
+        if index > #SpotifyState.Catalog then index = 1 end
+        playTrack(index)
+    end
+    local function togglePlayback()
+        if SpotifyState.CurrentSound then
+            if SpotifyState.IsPlaying then
+                SpotifyState.IsPlaying = false
+                pcall(function()
+                    SpotifyState.CurrentPausedPosition = math.max(0, tonumber(SpotifyState.CurrentSound.TimePosition) or 0)
+                    SpotifyState.CurrentSound:Pause()
+                end)
+                PlayerMeta.Text = "Reproducción pausada"
+            else
+                SpotifyState.IsPlaying = true
+                pcall(function()
+                    if SpotifyState.CurrentPausedPosition and SpotifyState.CurrentPausedPosition > 0 then SpotifyState.CurrentSound.TimePosition = SpotifyState.CurrentPausedPosition end
+                    SpotifyState.CurrentSound:Play()
+                end)
+                PlayerMeta.Text = "Reproducción activa"
+            end
+            syncPlaybackUI()
+        elseif SpotifyState.Catalog[SpotifyState.SelectedIndex] then
+            playTrack(SpotifyState.SelectedIndex)
+        end
+    end
+    local function setFloatingVisible(visible)
+        SpotifyState.FloatingPlayerVisible = visible == true
+        if FloatingPlayer then FloatingPlayer.Visible = SpotifyState.FloatingPlayerVisible end
+        refreshSpotifyPlaybackMenu(); refreshSpotifyFloatingPlayer()
+    end
+    local function createFloatingPlayer()
+        if FloatingPlayer and FloatingPlayer.Parent then return end
+        FloatingPlayer = mk("Frame", {
+            Parent = Window.ScreenGui,
+            Size = UDim2.fromOffset(350, 172), Position = UDim2.new(0.5, -175, 0.72, 0),
+            BackgroundColor3 = Color3.fromRGB(7, 7, 9), BackgroundTransparency = 0.03,
+            BorderSizePixel = 0, ClipsDescendants = true, Visible = SpotifyState.FloatingPlayerVisible,
+            Active = true, ZIndex = 520,
+        })
+        corner(FloatingPlayer, 22); stroke(FloatingPlayer, spotifyGreen, 1.3, 0.27)
+        local Drag = mk("TextButton", {
+            Parent = FloatingPlayer, Size = UDim2.new(1, -52, 0, 30), Position = UDim2.new(0, 14, 0, 0),
+            BackgroundTransparency = 1, Text = "MÚSICA  ·  mantener y arrastrar", TextColor3 = spotifyDim,
+            Font = Enum.Font.GothamBold, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false, ZIndex = 522,
+        })
+        local Close = mk("TextButton", {
+            Parent = FloatingPlayer, Size = UDim2.fromOffset(24, 24), Position = UDim2.new(1, -35, 0, 4),
+            BackgroundColor3 = Color3.fromRGB(42, 42, 46), BackgroundTransparency = 0.18,
+            Text = "×", TextColor3 = spotifyText, Font = Enum.Font.GothamBlack, TextSize = 17, AutoButtonColor = false, ZIndex = 523,
+        })
+        corner(Close, 8)
+        FloatCover = mk("ImageLabel", {
+            Parent = FloatingPlayer, Size = UDim2.fromOffset(54, 54), Position = UDim2.new(0, 14, 0, 38),
+            BackgroundColor3 = Color3.fromRGB(24, 24, 28), BackgroundTransparency = 0.10, BorderSizePixel = 0,
+            Image = "", ScaleType = Enum.ScaleType.Crop, ZIndex = 522,
+        })
+        corner(FloatCover, 12); stroke(FloatCover, spotifyGreen, 1, 0.38)
+        FloatFallback = mk("TextLabel", {
+            Parent = FloatCover, Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
+            Text = "♪", TextColor3 = spotifyGreen, Font = Enum.Font.GothamBlack, TextSize = 24, ZIndex = 523,
+        })
+        FloatTitle = mk("TextLabel", {
+            Parent = FloatingPlayer, Size = UDim2.new(1, -104, 0, 21), Position = UDim2.new(0, 80, 0, 42),
+            BackgroundTransparency = 1, Text = "Selecciona una canción", TextColor3 = spotifyText, Font = Enum.Font.GothamBold,
+            TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 522,
+        })
+        FloatArtist = mk("TextLabel", {
+            Parent = FloatingPlayer, Size = UDim2.new(1, -104, 0, 18), Position = UDim2.new(0, 80, 0, 64),
+            BackgroundTransparency = 1, Text = "Spotify", TextColor3 = spotifyDim, Font = Enum.Font.Gotham,
+            TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 522,
+        })
+        local ProgressTrack = mk("Frame", {
+            Parent = FloatingPlayer, Size = UDim2.new(1, -28, 0, 5), Position = UDim2.new(0, 14, 0, 104),
+            BackgroundColor3 = Color3.fromRGB(64, 64, 68), BorderSizePixel = 0, ZIndex = 522,
+        })
+        corner(ProgressTrack, 99)
+        FloatProgress = mk("Frame", {
+            Parent = ProgressTrack, Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = spotifyGreen, BorderSizePixel = 0, ZIndex = 523,
+        })
+        corner(FloatProgress, 99)
+        FloatTime = mk("TextLabel", {
+            Parent = FloatingPlayer, Size = UDim2.new(1, -28, 0, 14), Position = UDim2.new(0, 14, 0, 111),
+            BackgroundTransparency = 1, Text = "0:00 / 0:00", TextColor3 = spotifyDim, Font = Enum.Font.GothamMedium,
+            TextSize = 9, TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 522,
+        })
+        local function control(text, x, width)
+            local button = mk("TextButton", {
+                Parent = FloatingPlayer, Size = UDim2.fromOffset(width, 30), Position = UDim2.new(0, x, 1, -39),
+                BackgroundColor3 = Color3.fromRGB(36, 36, 40), BackgroundTransparency = 0.10,
+                Text = text, TextColor3 = spotifyText, Font = Enum.Font.GothamBlack, TextSize = 15, AutoButtonColor = false, ZIndex = 522,
+            })
+            corner(button, 9); return button
+        end
+        FloatLike = control("☆", 14, 42)
+        local Previous = control("‹‹", 66, 50)
+        FloatPlay = control("▶", 126, 50)
+        local Next = control("››", 186, 50)
+        FloatStatus = mk("TextLabel", {
+            Parent = FloatingPlayer, Size = UDim2.fromOffset(90, 30), Position = UDim2.new(1, -104, 1, -39),
+            BackgroundTransparency = 1, Text = "", TextColor3 = spotifyGreen, Font = Enum.Font.GothamBold,
+            TextSize = 9, TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 522,
+        })
+        Close.Activated:Connect(function() setFloatingVisible(false) end)
+        FloatLike.Activated:Connect(function() if SpotifyState.Catalog[SpotifyState.SelectedIndex] then toggleTrackLike(SpotifyState.SelectedIndex) end end)
+        Previous.Activated:Connect(previousTrack); FloatPlay.Activated:Connect(togglePlayback); Next.Activated:Connect(nextTrack)
+        local dragging, inputRef, startPoint, startPos = false, nil, nil, nil
+        track(Drag.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging, inputRef, startPoint, startPos = true, input, input.Position, FloatingPlayer.Position
+            end
+        end))
+        track(UserInputService.InputChanged:Connect(function(input)
+            if dragging and ((inputRef and input == inputRef) or input.UserInputType == Enum.UserInputType.MouseMovement) and startPoint and startPos then
+                local delta = input.Position - startPoint
+                FloatingPlayer.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            end
+        end))
+        track(UserInputService.InputEnded:Connect(function(input)
+            if dragging and (input == inputRef or input.UserInputType == Enum.UserInputType.MouseButton1) then dragging, inputRef, startPoint, startPos = false, nil, nil, nil end
+        end))
+    end
+    refreshSpotifyPlaybackMenu = function()
+        PlaybackSettingsMenu.Visible = SpotifyState.SettingsMenuVisible == true
+        VolumeValue.Text = string.format("%d%%", math.floor((SpotifyState.PlaybackVolume * 100) + 0.5))
+        SpeedValue.Text = string.format("%.2fx", SpotifyState.PlaybackSpeed)
+        FloatingToggle.Text = SpotifyState.FloatingPlayerVisible and "Reproductor flotante  •  ACTIVO" or "Reproductor flotante  •  ABRIR"
+        FloatingToggle.BackgroundColor3 = SpotifyState.FloatingPlayerVisible and spotifyGreen or Color3.fromRGB(38, 38, 42)
+        FloatingToggle.TextColor3 = SpotifyState.FloatingPlayerVisible and Color3.fromRGB(0, 0, 0) or spotifyText
+    end
+    refreshSpotifyFloatingPlayer = function()
+        if not FloatingPlayer or not FloatingPlayer.Parent then return end
+        FloatingPlayer.Visible = SpotifyState.FloatingPlayerVisible == true
+        local currentTrack = SpotifyState.CurrentTrack or SpotifyState.Catalog[SpotifyState.SelectedIndex]
+        if not currentTrack then return end
+        FloatCover.Image = currentTrack.Cover or ""; FloatFallback.Visible = trim(currentTrack.Cover or "") == ""
+        FloatTitle.Text = currentTrack.Name or "Selecciona una canción"; FloatArtist.Text = currentTrack.Artist or "Spotify"
+        local current = SpotifyState.CurrentSound and math.max(0, tonumber(SpotifyState.CurrentSound.TimePosition) or 0) or 0
+        local total = SpotifyState.CurrentSound and tonumber(SpotifyState.CurrentSound.TimeLength) or durationToSeconds(currentTrack.Duration)
+        total = math.max(total or 0, 1)
+        FloatProgress.Size = UDim2.new(clamp(current / total, 0, 1), 0, 1, 0)
+        FloatTime.Text = secondsToClock(current) .. " / " .. (currentTrack.Duration or secondsToClock(total))
+        FloatPlay.Text = SpotifyState.IsPlaying and "Ⅱ" or "▶"; FloatLike.Text = isLiked(SpotifyState.SelectedIndex) and "★" or "☆"
+        FloatLike.TextColor3 = isLiked(SpotifyState.SelectedIndex) and spotifyGreen or spotifyText
+        FloatStatus.Text = string.format("%d%% · %.2fx", math.floor((SpotifyState.PlaybackVolume * 100) + 0.5), SpotifyState.PlaybackSpeed)
+    end
+    local function openPlaybackMenu()
+        SpotifyState.SettingsMenuVisible = true
+        refreshSpotifyPlaybackMenu()
+    end
+    SettingsClose.Activated:Connect(function() SpotifyState.SettingsMenuVisible = false; refreshSpotifyPlaybackMenu() end)
+    FloatingToggle.Activated:Connect(function()
+        if not FloatingPlayer or not FloatingPlayer.Parent then createFloatingPlayer() end
+        setFloatingVisible(not SpotifyState.FloatingPlayerVisible)
+    end)
+    --// Activated funciona igual en ratón, pantalla táctil y gamepad sin disparar doble clic.
+    MoreTopBtn.Activated:Connect(openPlaybackMenu)
+    MoreBtn.Activated:Connect(openPlaybackMenu)
+    refreshSpotifyPlaybackMenu()
 
     local function bindRowTap(guiObject, callback)
         if not guiObject then
@@ -15386,7 +15676,15 @@ if DEMO_ACTIVO then
         CurrentPausedPosition = 0,
         CatalogLoaded = false,
         SearchQuery = "",
+        PlaybackVolume = 0.75,
+        PlaybackSpeed = 1,
+        SettingsMenuVisible = false,
+        FloatingPlayerVisible = false,
     }
+
+    --// Refrescos compartidos por la pestaña y el reproductor flotante.
+    local refreshSpotifyFloatingPlayer = function() end
+    local refreshSpotifyPlaybackMenu = function() end
 
     local function getRenderOrder()
         local order = {}
@@ -16341,6 +16639,7 @@ if DEMO_ACTIVO then
         end
 
         refreshAllRows()
+        refreshSpotifyFloatingPlayer()
     end
 
     local function destroyCurrentSound()
@@ -16382,6 +16681,7 @@ if DEMO_ACTIVO then
         else
             LikeBtn.Image = asset(82989818174730)
         end
+        refreshSpotifyFloatingPlayer()
     end
 
     local function updateProgress(track, sound)
@@ -16399,6 +16699,7 @@ if DEMO_ACTIVO then
         ProgressTimeLeft.Text = secondsToClock(current)
         ProgressTimeRight.Text = track and track.Duration or secondsToClock(total)
         ProgressFill.Size = UDim2.new(clamp(current / total, 0, 1), 0, 1, 0)
+        refreshSpotifyFloatingPlayer()
     end
 
     local function ensureTrackCached(track)
@@ -16472,7 +16773,8 @@ if DEMO_ACTIVO then
         local sound = Instance.new("Sound")
         sound.Name = "YY_Spotify_CurrentSound"
         sound.SoundId = soundAsset
-        sound.Volume = 0.75
+        sound.Volume = SpotifyState.PlaybackVolume
+        sound.PlaybackSpeed = SpotifyState.PlaybackSpeed
         sound.Looped = SpotifyState.IsRepeat
         sound.Parent = workspace
 
@@ -16536,6 +16838,429 @@ if DEMO_ACTIVO then
         renderSongRows()
         syncPlaybackUI()
     end
+
+    --// Ajustes y reproductor flotante: ambos controlan el mismo Sound activo.
+    local PlaybackSettingsMenu = mk("Frame", {
+        Parent = NowPlayingCard,
+        Size = UDim2.fromOffset(226, 162),
+        Position = UDim2.new(1, -240, 0, 38),
+        BackgroundColor3 = Color3.fromRGB(8, 8, 10),
+        BackgroundTransparency = 0.04,
+        BorderSizePixel = 0,
+        ClipsDescendants = true,
+        Visible = false,
+        ZIndex = 40,
+    })
+    corner(PlaybackSettingsMenu, 14)
+    stroke(PlaybackSettingsMenu, spotifyGreen, 1.1, 0.22)
+
+    local SettingsTitle = mk("TextLabel", {
+        Parent = PlaybackSettingsMenu,
+        Size = UDim2.new(1, -50, 0, 24),
+        Position = UDim2.new(0, 14, 0, 8),
+        BackgroundTransparency = 1,
+        Text = "Ajustes de reproducción",
+        TextColor3 = spotifyText,
+        Font = Enum.Font.GothamBold,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 41,
+    })
+
+    local SettingsClose = mk("TextButton", {
+        Parent = PlaybackSettingsMenu,
+        Size = UDim2.fromOffset(24, 24),
+        Position = UDim2.new(1, -34, 0, 8),
+        BackgroundColor3 = Color3.fromRGB(42, 42, 46),
+        BackgroundTransparency = 0.18,
+        Text = "×",
+        TextColor3 = spotifyText,
+        Font = Enum.Font.GothamBlack,
+        TextSize = 17,
+        AutoButtonColor = false,
+        ZIndex = 42,
+    })
+    corner(SettingsClose, 8)
+
+    local function createPlaybackAdjuster(label, top, onMinus, onPlus)
+        local title = mk("TextLabel", {
+            Parent = PlaybackSettingsMenu,
+            Size = UDim2.new(0, 78, 0, 22),
+            Position = UDim2.new(0, 14, 0, top),
+            BackgroundTransparency = 1,
+            Text = label,
+            TextColor3 = spotifyDim,
+            Font = Enum.Font.GothamMedium,
+            TextSize = 10,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 41,
+        })
+        local minus = mk("TextButton", {
+            Parent = PlaybackSettingsMenu,
+            Size = UDim2.fromOffset(26, 24),
+            Position = UDim2.new(1, -120, 0, top - 1),
+            BackgroundColor3 = Color3.fromRGB(44, 44, 48),
+            BackgroundTransparency = 0.16,
+            Text = "−",
+            TextColor3 = spotifyText,
+            Font = Enum.Font.GothamBlack,
+            TextSize = 15,
+            AutoButtonColor = false,
+            ZIndex = 42,
+        })
+        local value = mk("TextLabel", {
+            Parent = PlaybackSettingsMenu,
+            Size = UDim2.fromOffset(52, 24),
+            Position = UDim2.new(1, -90, 0, top - 1),
+            BackgroundColor3 = Color3.fromRGB(30, 30, 34),
+            BackgroundTransparency = 0.10,
+            Text = "",
+            TextColor3 = spotifyText,
+            Font = Enum.Font.GothamBold,
+            TextSize = 10,
+            ZIndex = 42,
+        })
+        local plus = mk("TextButton", {
+            Parent = PlaybackSettingsMenu,
+            Size = UDim2.fromOffset(26, 24),
+            Position = UDim2.new(1, -34, 0, top - 1),
+            BackgroundColor3 = Color3.fromRGB(44, 44, 48),
+            BackgroundTransparency = 0.16,
+            Text = "+",
+            TextColor3 = spotifyText,
+            Font = Enum.Font.GothamBlack,
+            TextSize = 15,
+            AutoButtonColor = false,
+            ZIndex = 42,
+        })
+        corner(minus, 7)
+        corner(value, 7)
+        corner(plus, 7)
+        minus.MouseButton1Click:Connect(onMinus)
+        plus.MouseButton1Click:Connect(onPlus)
+        return value
+    end
+
+    local VolumeValue = createPlaybackAdjuster("Volumen", 43, function()
+        SpotifyState.PlaybackVolume = clamp(SpotifyState.PlaybackVolume - 0.05, 0, 1)
+        if SpotifyState.CurrentSound then pcall(function() SpotifyState.CurrentSound.Volume = SpotifyState.PlaybackVolume end) end
+        refreshSpotifyPlaybackMenu()
+        refreshSpotifyFloatingPlayer()
+    end, function()
+        SpotifyState.PlaybackVolume = clamp(SpotifyState.PlaybackVolume + 0.05, 0, 1)
+        if SpotifyState.CurrentSound then pcall(function() SpotifyState.CurrentSound.Volume = SpotifyState.PlaybackVolume end) end
+        refreshSpotifyPlaybackMenu()
+        refreshSpotifyFloatingPlayer()
+    end)
+
+    local SpeedValue = createPlaybackAdjuster("Velocidad", 76, function()
+        SpotifyState.PlaybackSpeed = clamp(SpotifyState.PlaybackSpeed - 0.05, 0.50, 2)
+        if SpotifyState.CurrentSound then pcall(function() SpotifyState.CurrentSound.PlaybackSpeed = SpotifyState.PlaybackSpeed end) end
+        refreshSpotifyPlaybackMenu()
+        refreshSpotifyFloatingPlayer()
+    end, function()
+        SpotifyState.PlaybackSpeed = clamp(SpotifyState.PlaybackSpeed + 0.05, 0.50, 2)
+        if SpotifyState.CurrentSound then pcall(function() SpotifyState.CurrentSound.PlaybackSpeed = SpotifyState.PlaybackSpeed end) end
+        refreshSpotifyPlaybackMenu()
+        refreshSpotifyFloatingPlayer()
+    end)
+
+    local FloatingToggleButton = mk("TextButton", {
+        Parent = PlaybackSettingsMenu,
+        Size = UDim2.new(1, -28, 0, 30),
+        Position = UDim2.new(0, 14, 1, -40),
+        BackgroundColor3 = Color3.fromRGB(38, 38, 42),
+        BackgroundTransparency = 0.10,
+        Text = "",
+        TextColor3 = spotifyText,
+        Font = Enum.Font.GothamBold,
+        TextSize = 10,
+        AutoButtonColor = false,
+        ZIndex = 41,
+    })
+    corner(FloatingToggleButton, 9)
+
+    local SpotifyFloatingPlayer = nil
+    local FloatingCover, FloatingFallback, FloatingTitle, FloatingArtist, FloatingProgress, FloatingTime
+    local FloatingLikeButton, FloatingPlayButton, FloatingStatus
+
+    local function previousSpotifyTrack()
+        if #SpotifyState.Catalog == 0 then return end
+        local previous = SpotifyState.SelectedIndex - 1
+        if previous < 1 then previous = #SpotifyState.Catalog end
+        playTrack(previous)
+    end
+
+    local function nextSpotifyTrack()
+        if #SpotifyState.Catalog == 0 then return end
+        local nextIndex = SpotifyState.SelectedIndex + 1
+        if nextIndex > #SpotifyState.Catalog then nextIndex = 1 end
+        playTrack(nextIndex)
+    end
+
+    local function toggleSpotifyPlayback()
+        if SpotifyState.CurrentSound then
+            if SpotifyState.IsPlaying then
+                SpotifyState.IsPlaying = false
+                pcall(function()
+                    SpotifyState.CurrentPausedPosition = math.max(0, tonumber(SpotifyState.CurrentSound.TimePosition) or 0)
+                    SpotifyState.CurrentSound:Pause()
+                end)
+                PlayerMeta.Text = "Reproducción pausada"
+            else
+                SpotifyState.IsPlaying = true
+                pcall(function()
+                    if SpotifyState.CurrentPausedPosition and SpotifyState.CurrentPausedPosition > 0 then
+                        SpotifyState.CurrentSound.TimePosition = SpotifyState.CurrentPausedPosition
+                    end
+                    SpotifyState.CurrentSound:Play()
+                end)
+                PlayerMeta.Text = "Reproducción activa"
+            end
+            syncPlaybackUI()
+            return
+        end
+        if SpotifyState.Catalog[SpotifyState.SelectedIndex] then playTrack(SpotifyState.SelectedIndex) end
+    end
+
+    local function setSpotifyFloatingVisible(visible)
+        SpotifyState.FloatingPlayerVisible = visible == true
+        if SpotifyFloatingPlayer then SpotifyFloatingPlayer.Visible = SpotifyState.FloatingPlayerVisible end
+        refreshSpotifyPlaybackMenu()
+        refreshSpotifyFloatingPlayer()
+    end
+
+    local function createSpotifyFloatingPlayer()
+        if SpotifyFloatingPlayer and SpotifyFloatingPlayer.Parent then return end
+
+        SpotifyFloatingPlayer = mk("Frame", {
+            Parent = DemoUI.ScreenGui,
+            Size = UDim2.fromOffset(350, 172),
+            Position = UDim2.new(0.5, -175, 0.72, 0),
+            BackgroundColor3 = Color3.fromRGB(7, 7, 9),
+            BackgroundTransparency = 0.03,
+            BorderSizePixel = 0,
+            ClipsDescendants = true,
+            Visible = SpotifyState.FloatingPlayerVisible,
+            Active = true,
+            ZIndex = 520,
+        })
+        corner(SpotifyFloatingPlayer, 22)
+        stroke(SpotifyFloatingPlayer, spotifyGreen, 1.3, 0.27)
+
+        local DragHandle = mk("TextButton", {
+            Parent = SpotifyFloatingPlayer,
+            Size = UDim2.new(1, -52, 0, 30),
+            Position = UDim2.new(0, 14, 0, 0),
+            BackgroundTransparency = 1,
+            Text = "MÚSICA  ·  mantener y arrastrar",
+            TextColor3 = spotifyDim,
+            Font = Enum.Font.GothamBold,
+            TextSize = 9,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            AutoButtonColor = false,
+            ZIndex = 522,
+        })
+
+        local Close = mk("TextButton", {
+            Parent = SpotifyFloatingPlayer,
+            Size = UDim2.fromOffset(24, 24),
+            Position = UDim2.new(1, -35, 0, 4),
+            BackgroundColor3 = Color3.fromRGB(42, 42, 46),
+            BackgroundTransparency = 0.18,
+            Text = "×",
+            TextColor3 = spotifyText,
+            Font = Enum.Font.GothamBlack,
+            TextSize = 17,
+            AutoButtonColor = false,
+            ZIndex = 523,
+        })
+        corner(Close, 8)
+
+        FloatingCover = mk("ImageLabel", {
+            Parent = SpotifyFloatingPlayer,
+            Size = UDim2.fromOffset(54, 54),
+            Position = UDim2.new(0, 14, 0, 38),
+            BackgroundColor3 = Color3.fromRGB(24, 24, 28),
+            BackgroundTransparency = 0.10,
+            BorderSizePixel = 0,
+            Image = "",
+            ScaleType = Enum.ScaleType.Crop,
+            ZIndex = 522,
+        })
+        corner(FloatingCover, 12)
+        stroke(FloatingCover, spotifyGreen, 1, 0.38)
+        FloatingFallback = mk("TextLabel", {
+            Parent = FloatingCover,
+            Size = UDim2.new(1, 0, 1, 0),
+            BackgroundTransparency = 1,
+            Text = "♪",
+            TextColor3 = spotifyGreen,
+            Font = Enum.Font.GothamBlack,
+            TextSize = 24,
+            ZIndex = 523,
+        })
+
+        FloatingTitle = mk("TextLabel", {
+            Parent = SpotifyFloatingPlayer,
+            Size = UDim2.new(1, -104, 0, 21),
+            Position = UDim2.new(0, 80, 0, 42),
+            BackgroundTransparency = 1,
+            Text = "Selecciona una canción",
+            TextColor3 = spotifyText,
+            Font = Enum.Font.GothamBold,
+            TextSize = 13,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            ZIndex = 522,
+        })
+        FloatingArtist = mk("TextLabel", {
+            Parent = SpotifyFloatingPlayer,
+            Size = UDim2.new(1, -104, 0, 18),
+            Position = UDim2.new(0, 80, 0, 64),
+            BackgroundTransparency = 1,
+            Text = "Spotify",
+            TextColor3 = spotifyDim,
+            Font = Enum.Font.Gotham,
+            TextSize = 10,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            ZIndex = 522,
+        })
+
+        local ProgressTrack = mk("Frame", {
+            Parent = SpotifyFloatingPlayer,
+            Size = UDim2.new(1, -28, 0, 5),
+            Position = UDim2.new(0, 14, 0, 104),
+            BackgroundColor3 = Color3.fromRGB(64, 64, 68),
+            BorderSizePixel = 0,
+            ZIndex = 522,
+        })
+        corner(ProgressTrack, 99)
+        FloatingProgress = mk("Frame", {
+            Parent = ProgressTrack,
+            Size = UDim2.new(0, 0, 1, 0),
+            BackgroundColor3 = spotifyGreen,
+            BorderSizePixel = 0,
+            ZIndex = 523,
+        })
+        corner(FloatingProgress, 99)
+        FloatingTime = mk("TextLabel", {
+            Parent = SpotifyFloatingPlayer,
+            Size = UDim2.new(1, -28, 0, 14),
+            Position = UDim2.new(0, 14, 0, 111),
+            BackgroundTransparency = 1,
+            Text = "0:00 / 0:00",
+            TextColor3 = spotifyDim,
+            Font = Enum.Font.GothamMedium,
+            TextSize = 9,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = 522,
+        })
+
+        local function control(text, x, width)
+            local button = mk("TextButton", {
+                Parent = SpotifyFloatingPlayer,
+                Size = UDim2.fromOffset(width, 30),
+                Position = UDim2.new(0, x, 1, -39),
+                BackgroundColor3 = Color3.fromRGB(36, 36, 40),
+                BackgroundTransparency = 0.10,
+                Text = text,
+                TextColor3 = spotifyText,
+                Font = Enum.Font.GothamBlack,
+                TextSize = 15,
+                AutoButtonColor = false,
+                ZIndex = 522,
+            })
+            corner(button, 9)
+            return button
+        end
+        FloatingLikeButton = control("☆", 14, 42)
+        local Previous = control("‹‹", 66, 50)
+        FloatingPlayButton = control("▶", 126, 50)
+        local Next = control("››", 186, 50)
+        FloatingStatus = mk("TextLabel", {
+            Parent = SpotifyFloatingPlayer,
+            Size = UDim2.fromOffset(90, 30),
+            Position = UDim2.new(1, -104, 1, -39),
+            BackgroundTransparency = 1,
+            Text = "",
+            TextColor3 = spotifyGreen,
+            Font = Enum.Font.GothamBold,
+            TextSize = 9,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = 522,
+        })
+
+        Close.MouseButton1Click:Connect(function() setSpotifyFloatingVisible(false) end)
+        FloatingLikeButton.MouseButton1Click:Connect(function()
+            if SpotifyState.Catalog[SpotifyState.SelectedIndex] then toggleTrackLike(SpotifyState.SelectedIndex) end
+        end)
+        Previous.MouseButton1Click:Connect(previousSpotifyTrack)
+        FloatingPlayButton.MouseButton1Click:Connect(toggleSpotifyPlayback)
+        Next.MouseButton1Click:Connect(nextSpotifyTrack)
+
+        local dragging, dragInput, dragStart, startPosition = false, nil, nil, nil
+        track(DragHandle.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging, dragInput, dragStart, startPosition = true, input, input.Position, SpotifyFloatingPlayer.Position
+            end
+        end))
+        track(UserInputService.InputChanged:Connect(function(input)
+            if dragging and ((dragInput and input == dragInput) or input.UserInputType == Enum.UserInputType.MouseMovement) and dragStart and startPosition then
+                local delta = input.Position - dragStart
+                SpotifyFloatingPlayer.Position = UDim2.new(startPosition.X.Scale, startPosition.X.Offset + delta.X, startPosition.Y.Scale, startPosition.Y.Offset + delta.Y)
+            end
+        end))
+        track(UserInputService.InputEnded:Connect(function(input)
+            if dragging and (input == dragInput or input.UserInputType == Enum.UserInputType.MouseButton1) then
+                dragging, dragInput, dragStart, startPosition = false, nil, nil, nil
+            end
+        end))
+    end
+
+    refreshSpotifyPlaybackMenu = function()
+        PlaybackSettingsMenu.Visible = SpotifyState.SettingsMenuVisible == true
+        VolumeValue.Text = string.format("%d%%", math.floor((SpotifyState.PlaybackVolume * 100) + 0.5))
+        SpeedValue.Text = string.format("%.2fx", SpotifyState.PlaybackSpeed)
+        FloatingToggleButton.Text = SpotifyState.FloatingPlayerVisible and "Reproductor flotante  •  ACTIVO" or "Reproductor flotante  •  ABRIR"
+        FloatingToggleButton.BackgroundColor3 = SpotifyState.FloatingPlayerVisible and spotifyGreen or Color3.fromRGB(38, 38, 42)
+        FloatingToggleButton.TextColor3 = SpotifyState.FloatingPlayerVisible and Color3.fromRGB(0, 0, 0) or spotifyText
+    end
+
+    refreshSpotifyFloatingPlayer = function()
+        if not SpotifyFloatingPlayer or not SpotifyFloatingPlayer.Parent then return end
+        SpotifyFloatingPlayer.Visible = SpotifyState.FloatingPlayerVisible == true
+        local currentTrack = SpotifyState.CurrentTrack or SpotifyState.Catalog[SpotifyState.SelectedIndex]
+        if not currentTrack then return end
+        FloatingCover.Image = currentTrack.Cover or ""
+        FloatingFallback.Visible = trim(currentTrack.Cover or "") == ""
+        FloatingTitle.Text = currentTrack.Name or "Selecciona una canción"
+        FloatingArtist.Text = currentTrack.Artist or "Spotify"
+        local current = SpotifyState.CurrentSound and math.max(0, tonumber(SpotifyState.CurrentSound.TimePosition) or 0) or 0
+        local total = SpotifyState.CurrentSound and tonumber(SpotifyState.CurrentSound.TimeLength) or durationToSeconds(currentTrack.Duration)
+        total = math.max(total or 0, 1)
+        FloatingProgress.Size = UDim2.new(clamp(current / total, 0, 1), 0, 1, 0)
+        FloatingTime.Text = secondsToClock(current) .. " / " .. (currentTrack.Duration or secondsToClock(total))
+        FloatingPlayButton.Text = SpotifyState.IsPlaying and "Ⅱ" or "▶"
+        FloatingLikeButton.Text = isLiked(SpotifyState.SelectedIndex) and "★" or "☆"
+        FloatingLikeButton.TextColor3 = isLiked(SpotifyState.SelectedIndex) and spotifyGreen or spotifyText
+        FloatingStatus.Text = string.format("%d%% · %.2fx", math.floor((SpotifyState.PlaybackVolume * 100) + 0.5), SpotifyState.PlaybackSpeed)
+    end
+
+    SettingsClose.MouseButton1Click:Connect(function()
+        SpotifyState.SettingsMenuVisible = false
+        refreshSpotifyPlaybackMenu()
+    end)
+    FloatingToggleButton.MouseButton1Click:Connect(function()
+        if not SpotifyFloatingPlayer or not SpotifyFloatingPlayer.Parent then createSpotifyFloatingPlayer() end
+        setSpotifyFloatingVisible(not SpotifyState.FloatingPlayerVisible)
+    end)
+    MoreTopBtn.MouseButton1Click:Connect(function()
+        SpotifyState.SettingsMenuVisible = not SpotifyState.SettingsMenuVisible
+        refreshSpotifyPlaybackMenu()
+    end)
+    refreshSpotifyPlaybackMenu()
 
     local function bindRowTap(guiObject, callback)
         if not guiObject then
