@@ -9200,10 +9200,10 @@ do
     --// SHADERS OVERDRIVE: efectos locales, reversibles y con presupuesto fijo.
     --// No usa assets externos ni altera los scripts/pestañas fuera de Shaders.
     local ShaderQualityProfiles = {
-        Lite = {reflectionRadius = 42, reflectionLimit = 45, rainRate = 42, rainRadius = 25},
-        Balanced = {reflectionRadius = 60, reflectionLimit = 85, rainRate = 72, rainRadius = 34},
-        Cinematic = {reflectionRadius = 78, reflectionLimit = 130, rainRate = 108, rainRadius = 44},
-        Ultra = {reflectionRadius = 104, reflectionLimit = 220, rainRate = 132, rainRadius = 54},
+        Lite = {reflectionRadius = 42, reflectionLimit = 45, shadowRadius = 34, shadowLimit = 8, rainRate = 42, rainRadius = 25},
+        Balanced = {reflectionRadius = 60, reflectionLimit = 85, shadowRadius = 48, shadowLimit = 14, rainRate = 72, rainRadius = 34},
+        Cinematic = {reflectionRadius = 78, reflectionLimit = 130, shadowRadius = 62, shadowLimit = 20, rainRate = 108, rainRadius = 44},
+        Ultra = {reflectionRadius = 104, reflectionLimit = 220, shadowRadius = 78, shadowLimit = 28, rainRate = 132, rainRadius = 54},
     }
     local ShaderSceneQuality = "Balanced"
 
@@ -9227,6 +9227,14 @@ do
         ContactRig = nil,
         ContactParts = {},
         ContactElapsed = 0,
+        ModelDetailEnabled = true,
+        ModelApplied = {},
+        ShadowEnabled = false,
+        ShadowStrength = 0.30,
+        ShadowRig = nil,
+        ShadowParts = {},
+        ShadowElapsed = 0,
+        ShadowConnection = nil,
         Original = {},
         Applied = {},
         Connection = nil,
@@ -9263,6 +9271,15 @@ do
     function ShaderReflections:_applyWetPart(part)
         if not part or not part.Parent or not part:IsA("BasePart") then return false end
         if part.Transparency >= 0.96 or part.Size.Magnitude < 1.2 then return false end
+        local ancestor = part
+        while ancestor do
+            if string.sub(ancestor.Name or "", 1, 16) == "YinYangShader_" then return false end
+            ancestor = ancestor.Parent
+        end
+        local ownerModel = part:FindFirstAncestorOfClass("Model")
+        if ownerModel == (LocalPlayer and LocalPlayer.Character) then return false end
+        local inModel = ownerModel ~= nil
+        if inModel and not self.ModelDetailEnabled then return false end
         local floorOnly = self.SurfaceMode == "Floors"
         if floorOnly and math.abs(part.CFrame.UpVector.Y) < 0.42 then return false end
         local multiplier = self:_surfaceMultiplier(part)
@@ -9270,10 +9287,14 @@ do
         local ok, current = pcall(function() return part.Reflectance end)
         if not ok then return false end
         if self.Original[part] == nil then self.Original[part] = current end
+        if inModel then multiplier = multiplier * 0.92 end
         local applied = pcall(function()
             part.Reflectance = math.clamp(self.Original[part] + self.Intensity * self.Wetness * multiplier, 0, 0.90)
         end)
-        if applied then self.Applied[part] = true end
+        if applied then
+            self.Applied[part] = true
+            if inModel then self.ModelApplied[part] = true end
+        end
         return applied
     end
 
@@ -9307,6 +9328,78 @@ do
     function ShaderReflections:_clearContact()
         if self.ContactRig and self.ContactRig.Parent then pcall(function() self.ContactRig:Destroy() end) end
         self.ContactRig, self.ContactParts = nil, {}
+    end
+
+    function ShaderReflections:_clearSceneShadows()
+        if self.ShadowConnection then self.ShadowConnection:Disconnect(); self.ShadowConnection = nil end
+        if self.ShadowRig and self.ShadowRig.Parent then pcall(function() self.ShadowRig:Destroy() end) end
+        self.ShadowRig, self.ShadowParts = nil, {}
+    end
+
+    function ShaderReflections:_refreshSceneShadows()
+        if not self.ShadowEnabled then
+            self:_clearSceneShadows()
+            return
+        end
+        local character, root = self:_root()
+        if not character or not root then return end
+        if not self.ShadowRig or not self.ShadowRig.Parent then
+            local rig = Instance.new("Folder")
+            rig.Name = "YinYangShader_ModelShadows"
+            rig.Parent = workspace
+            self.ShadowRig, self.ShadowParts = rig, {}
+        end
+
+        local profile = shaderQualityProfile()
+        local models, active, count = {}, {}, 0
+        for _, part in ipairs(self:_scan(root.Position, profile.shadowRadius, character)) do
+            if count >= profile.shadowLimit then break end
+            local model = part:FindFirstAncestorOfClass("Model")
+            if model and model ~= character and model.Parent and not models[model] then
+                models[model] = true
+                local okBounds, bounds, size = pcall(function() return model:GetBoundingBox() end)
+                if okBounds and size and size.Magnitude >= 1.2 then
+                    local params = RaycastParams.new()
+                    params.FilterType = Enum.RaycastFilterType.Exclude
+                    params.FilterDescendantsInstances = {character, self.ShadowRig, model}
+                    params.IgnoreWater = false
+                    local origin = bounds.Position + Vector3.new(0, math.max(2, size.Y * 0.55), 0)
+                    local hit = workspace:Raycast(origin, Vector3.new(0, -(math.max(10, size.Y + 16)), 0), params)
+                    if hit and hit.Instance and math.abs(hit.Normal.Y) >= 0.34 then
+                        count = count + 1
+                        local proxy = self.ShadowParts[model]
+                        if not proxy or not proxy.Parent then
+                            proxy = Instance.new("Part")
+                            proxy.Name = "YinYangShader_ModelShadow"
+                            proxy.Shape = Enum.PartType.Ball
+                            proxy.Anchored, proxy.CanCollide, proxy.CanQuery, proxy.CanTouch, proxy.CastShadow = true, false, false, false, false
+                            proxy.Material = Enum.Material.SmoothPlastic
+                            proxy.Color = Color3.fromRGB(5, 7, 12)
+                            proxy.Parent = self.ShadowRig
+                            self.ShadowParts[model] = proxy
+                        end
+                        local right = Vector3.new(1, 0, 0)
+                        if math.abs(right:Dot(hit.Normal)) > 0.92 then right = Vector3.new(0, 0, 1) end
+                        local back = hit.Normal:Cross(right).Unit
+                        right = back:Cross(hit.Normal).Unit
+                        proxy.Size = Vector3.new(
+                            math.clamp(size.X * 0.70, 1.0, 18),
+                            0.055,
+                            math.clamp(size.Z * 0.70, 1.0, 18)
+                        )
+                        proxy.CFrame = CFrame.fromMatrix(hit.Position + hit.Normal * (0.018 + count * 0.0002), right, hit.Normal, back)
+                        proxy.Transparency = math.clamp(0.93 - self.ShadowStrength * 0.38, 0.64, 0.89)
+                        active[model] = true
+                    end
+                end
+            end
+        end
+        for model, proxy in pairs(self.ShadowParts) do
+            if not active[model] then
+                if proxy and proxy.Parent then proxy:Destroy() end
+                self.ShadowParts[model] = nil
+            end
+        end
     end
 
     function ShaderReflections:_refreshContact()
@@ -9389,13 +9482,14 @@ do
         end
         if self.SceneCoverage and #self.SceneQueue == 0 then self:QueueSceneCoverage() end
         self:_refreshContact()
+        self:_refreshSceneShadows()
     end
 
     function ShaderReflections:Restore()
         for part, original in pairs(self.Original) do
             if part and part.Parent then pcall(function() part.Reflectance = original end) end
         end
-        self.Original, self.Applied = {}, {}
+        self.Original, self.Applied, self.ModelApplied = {}, {}, {}
         self:_clearContact()
     end
 
@@ -9443,6 +9537,50 @@ do
         self:_refreshContact()
     end
 
+    function ShaderReflections:SetModelDetailEnabled(enabled)
+        self.ModelDetailEnabled = enabled == true
+        if not self.ModelDetailEnabled then
+            for part in pairs(self.ModelApplied) do
+                local original = self.Original[part]
+                if part and part.Parent and original ~= nil then pcall(function() part.Reflectance = original end) end
+                self.Original[part] = nil
+                self.Applied[part] = nil
+            end
+            self.ModelApplied = {}
+        end
+        if self.Enabled then
+            self.SceneQueue, self.SceneCursor, self.SceneComplete = {}, 1, false
+            self:Refresh()
+        end
+    end
+
+    function ShaderReflections:SetShadowEnabled(enabled)
+        enabled = enabled == true
+        if self.ShadowEnabled == enabled then
+            if enabled then self:_refreshSceneShadows() else self:_clearSceneShadows() end
+            return
+        end
+        self.ShadowEnabled = enabled
+        if not enabled then
+            self:_clearSceneShadows()
+            return
+        end
+        self.ShadowElapsed = 0
+        self.ShadowConnection = RunService.Heartbeat:Connect(function(delta)
+            self.ShadowElapsed = self.ShadowElapsed + delta
+            if self.ShadowElapsed >= 0.34 then
+                self.ShadowElapsed = 0
+                self:_refreshSceneShadows()
+            end
+        end)
+        self:_refreshSceneShadows()
+    end
+
+    function ShaderReflections:SetShadowStrength(value)
+        self.ShadowStrength = math.clamp(tonumber(value) or self.ShadowStrength, 0.05, 0.70)
+        self:_refreshSceneShadows()
+    end
+
     function ShaderReflections:SetEnabled(enabled)
         enabled = enabled == true
         if self.Enabled == enabled then
@@ -9471,6 +9609,10 @@ do
             if self.ContactElapsed >= 0.12 then
                 self.ContactElapsed = 0
                 self:_refreshContact()
+            end
+            if self.ShadowElapsed >= 0.34 and not self.ShadowConnection then
+                self.ShadowElapsed = 0
+                self:_refreshSceneShadows()
             end
             if self.Elapsed >= 1.15 then
                 self.Elapsed = 0
@@ -9700,11 +9842,14 @@ do
         self:_destroyRig()
     end
 
+    local shaderQueuePersistence = function() end
+
     local function shaderSetQuality(name)
         if not ShaderQualityProfiles[name] then return false end
         ShaderSceneQuality = name
         if ShaderReflections.Enabled then ShaderReflections:Refresh() end
         ShaderRain:_syncVisuals()
+        shaderQueuePersistence()
         return true
     end
 
@@ -9734,6 +9879,11 @@ do
     local ShaderModeLabel = nil
     local ShaderModeCards = {}
     local ShaderCustomConnections = {}
+    -- Guardado silencioso de Shaders: no crea perfiles ni botones; solo conserva
+    -- el último estado seleccionado cuando el executor dispone de archivos.
+    local ShaderPersistenceFile = "YinYang_Shader_Autosave.json"
+    local ShaderPersistenceToken = 0
+    local ShaderSavedState = nil
 
     local function shaderWarn(report, context)
         if report and not report.ok then
@@ -9744,6 +9894,69 @@ do
     local function shaderClearCustomOverrides()
         ShaderCustomOverrides = {}
         ShaderCustomActiveSlider = nil
+    end
+
+    local function shaderSerializableOverrides()
+        local result = {}
+        for id, value in pairs(ShaderCustomOverrides) do
+            if type(id) == "string" and (type(value) == "number" or type(value) == "boolean") then
+                result[id] = value
+            end
+        end
+        return result
+    end
+
+    local function shaderCapturePersistence()
+        return {
+            version = 1,
+            demoEnabled = ShaderDemoEnabled == true,
+            preset = ShaderDemoPreset,
+            custom = shaderSerializableOverrides(),
+            quality = ShaderSceneQuality,
+            overdrive = {
+                wetReflections = ShaderReflections.Enabled == true,
+                reflectionIntensity = ShaderReflections.Intensity,
+                wetness = ShaderReflections.Wetness,
+                surfaceMode = ShaderReflections.SurfaceMode,
+                sceneCoverage = ShaderReflections.SceneCoverage == true,
+                contact = ShaderReflections.ContactEnabled == true,
+                contactStrength = ShaderReflections.ContactStrength,
+                modelDetail = ShaderReflections.ModelDetailEnabled == true,
+                modelShadows = ShaderReflections.ShadowEnabled == true,
+                shadowStrength = ShaderReflections.ShadowStrength,
+                rain = ShaderRain.Enabled == true,
+                rainIntensity = ShaderRain.Intensity,
+                rainAudio = ShaderRain.SoundEnabled == true,
+                rainAudioVolume = ShaderRain.SoundVolume,
+                rainShelter = ShaderRain.RespectShelter == true,
+                storm = ShaderRain.StormEnabled == true,
+            },
+        }
+    end
+
+    shaderQueuePersistence = function()
+        if type(writefile) ~= "function" then return end
+        ShaderPersistenceToken = ShaderPersistenceToken + 1
+        local token = ShaderPersistenceToken
+        task.delay(0.35, function()
+            if token ~= ShaderPersistenceToken then return end
+            pcall(function()
+                game:GetService("HttpService"):JSONEncode(shaderCapturePersistence())
+            end)
+            pcall(function()
+                writefile(ShaderPersistenceFile, game:GetService("HttpService"):JSONEncode(shaderCapturePersistence()))
+            end)
+        end)
+    end
+
+    local function shaderLoadPersistence()
+        if type(readfile) ~= "function" or type(isfile) ~= "function" then return nil end
+        local ok, state = pcall(function()
+            if not isfile(ShaderPersistenceFile) then return nil end
+            return game:GetService("HttpService"):JSONDecode(readfile(ShaderPersistenceFile))
+        end)
+        if ok and type(state) == "table" and state.version == 1 then return state end
+        return nil
     end
 
     local function shaderSyncImmersivePreset(name)
@@ -9766,6 +9979,7 @@ do
         local report = ShaderManager:Restore(options or {})
         if report and report.ok then
             shaderClearCustomOverrides()
+            shaderQueuePersistence()
         end
         return report
     end
@@ -9787,6 +10001,7 @@ do
         if ShaderCustomRefresh then
             task.defer(ShaderCustomRefresh)
         end
+        if report and report.ok then shaderQueuePersistence() end
         return report
     end
 
@@ -9799,6 +10014,7 @@ do
         if ShaderCustomRefresh then
             task.defer(ShaderCustomRefresh)
         end
+        if report and report.ok then shaderQueuePersistence() end
         return report
     end
 
@@ -10209,6 +10425,7 @@ do
                 else
                     shaderApplySingle(spec.target, spec.property, state)
                 end
+                shaderQueuePersistence()
             end
         end
 
@@ -10367,6 +10584,7 @@ do
                 else
                     shaderApplySingle(spec.target, spec.property, value)
                 end
+                shaderQueuePersistence()
             end
         end
 
@@ -10470,6 +10688,9 @@ do
             {id = "SceneCoverage", es = "Cobertura de escena", en = "Scene coverage", default = true, target = "Lighting", property = "EnvironmentSpecularScale", toggle = true, getValue = function() return ShaderReflections.SceneCoverage end, onChange = function(value) ShaderReflections:SetSceneCoverage(value) end},
             {id = "ContactReflection", es = "Contacto del personaje", en = "Character contact", default = false, target = "Lighting", property = "EnvironmentSpecularScale", toggle = true, getValue = function() return ShaderReflections.ContactEnabled end, onChange = function(value) ShaderReflections:SetContactEnabled(value) end},
             {id = "ContactStrength", es = "Detalle de contacto", en = "Contact detail", min = 0.05, max = 0.60, default = 0.24, step = 0.01, target = "Lighting", property = "EnvironmentSpecularScale", getValue = function() return ShaderReflections.ContactStrength end, onChange = function(value) ShaderReflections:SetContactStrength(value) end},
+            {id = "ModelSurfaceDetail", es = "Detalle en modelos", en = "Model surface detail", default = true, target = "Lighting", property = "EnvironmentSpecularScale", toggle = true, getValue = function() return ShaderReflections.ModelDetailEnabled end, onChange = function(value) ShaderReflections:SetModelDetailEnabled(value) end},
+            {id = "ModelShadows", es = "Sombras de modelos", en = "Model contact shadows", default = false, target = "Lighting", property = "ShadowSoftness", toggle = true, getValue = function() return ShaderReflections.ShadowEnabled end, onChange = function(value) ShaderReflections:SetShadowEnabled(value) end},
+            {id = "ModelShadowStrength", es = "Intensidad de sombras", en = "Shadow intensity", min = 0.05, max = 0.70, default = 0.30, step = 0.01, target = "Lighting", property = "ShadowSoftness", getValue = function() return ShaderReflections.ShadowStrength end, onChange = function(value) ShaderReflections:SetShadowStrength(value) end},
             {id = "PhysicalRain", es = "Lluvia física", en = "Physical rain", default = false, target = "Lighting", property = "GlobalShadows", toggle = true, getValue = function() return ShaderRain.Enabled end, onChange = function(value) ShaderRain:SetEnabled(value) end},
             {id = "RainIntensity", es = "Densidad de lluvia", en = "Rain density", min = 0.20, max = 1, default = 0.72, step = 0.01, target = "Lighting", property = "Brightness", getValue = function() return ShaderRain.Intensity end, onChange = function(value) ShaderRain:SetIntensity(value) end},
             {id = "RainAudio", es = "Audio de lluvia", en = "Rain audio", default = true, target = "Lighting", property = "GlobalShadows", toggle = true, getValue = function() return ShaderRain.SoundEnabled end, onChange = function(value) ShaderRain:SetSoundEnabled(value) end},
@@ -10741,8 +10962,61 @@ do
         end
     end
 
-    local initialDemoReport = shaderApplyPreset(ShaderDemoPreset, false)
+    ShaderSavedState = shaderLoadPersistence()
+    if ShaderSavedState then
+        if type(ShaderSavedState.demoEnabled) == "boolean" then ShaderDemoEnabled = ShaderSavedState.demoEnabled end
+        if type(ShaderSavedState.preset) == "string" and ShaderManager.Presets[ShaderSavedState.preset] then
+            ShaderDemoPreset = ShaderSavedState.preset
+        end
+        if type(ShaderSavedState.quality) == "string" and ShaderQualityProfiles[ShaderSavedState.quality] then
+            ShaderSceneQuality = ShaderSavedState.quality
+        end
+    end
+
+    local initialDemoReport
+    if ShaderDemoEnabled then
+        initialDemoReport = shaderApplyPreset(ShaderDemoPreset, false)
+    else
+        initialDemoReport = shaderRestoreAll()
+    end
     shaderWarn(initialDemoReport, "Demo inicial")
+
+    if ShaderSavedState then
+        if type(ShaderSavedState.custom) == "table" then
+            ShaderCustomOverrides = ShaderSavedState.custom
+            for _, spec in ipairs(shaderCustomSpecs()) do
+                if spec.id then
+                    local value = ShaderCustomOverrides[spec.id]
+                    if type(value) == "number" or type(value) == "boolean" then
+                        if type(spec.onChange) == "function" then
+                            pcall(spec.onChange, value)
+                        else
+                            shaderApplySingle(spec.target, spec.property, value)
+                        end
+                    end
+                end
+            end
+        end
+        local overdrive = ShaderSavedState.overdrive
+        if type(overdrive) == "table" then
+            if type(overdrive.reflectionIntensity) == "number" then ShaderReflections:SetIntensity(overdrive.reflectionIntensity) end
+            if type(overdrive.wetness) == "number" then ShaderReflections:SetWetness(overdrive.wetness) end
+            if type(overdrive.surfaceMode) == "string" then ShaderReflections:SetSurfaceMode(overdrive.surfaceMode) end
+            if type(overdrive.sceneCoverage) == "boolean" then ShaderReflections:SetSceneCoverage(overdrive.sceneCoverage) end
+            if type(overdrive.contactStrength) == "number" then ShaderReflections:SetContactStrength(overdrive.contactStrength) end
+            if type(overdrive.modelDetail) == "boolean" then ShaderReflections:SetModelDetailEnabled(overdrive.modelDetail) end
+            if type(overdrive.modelShadows) == "boolean" then ShaderReflections:SetShadowEnabled(overdrive.modelShadows) end
+            if type(overdrive.shadowStrength) == "number" then ShaderReflections:SetShadowStrength(overdrive.shadowStrength) end
+            if type(overdrive.wetReflections) == "boolean" then ShaderReflections:SetEnabled(overdrive.wetReflections) end
+            if type(overdrive.contact) == "boolean" then ShaderReflections:SetContactEnabled(overdrive.contact) end
+            if type(overdrive.rainIntensity) == "number" then ShaderRain:SetIntensity(overdrive.rainIntensity) end
+            if type(overdrive.rainAudio) == "boolean" then ShaderRain:SetSoundEnabled(overdrive.rainAudio) end
+            if type(overdrive.rainAudioVolume) == "number" then ShaderRain:SetSoundVolume(overdrive.rainAudioVolume) end
+            if type(overdrive.rainShelter) == "boolean" then ShaderRain:SetRespectShelter(overdrive.rainShelter) end
+            if type(overdrive.rain) == "boolean" then ShaderRain:SetEnabled(overdrive.rain) end
+            if type(overdrive.storm) == "boolean" then ShaderRain:SetStormEnabled(overdrive.storm) end
+        end
+    end
 
     local AutoTabShaders = Window:CreateTab("Shaders", "Shaders", "rbxassetid://114693810646148")
     AutoTabShaders:CreateLabel("Sistema de Shaders Roblox", "Roblox Shader System", 16)
@@ -10757,7 +11031,7 @@ do
     ShaderModeLabel = AutoTabShaders:CreateLabel("Modo activo: Morning", "Active mode: Morning", 11)
     ShaderModeLabel:SetAttribute("ThemeTextRole", "Accent")
 
-    AutoTabShaders:CreateToggle("Demo de Shaders", "Shader Demo", true, function(enabled)
+    AutoTabShaders:CreateToggle("Demo de Shaders", "Shader Demo", ShaderDemoEnabled, function(enabled)
         ShaderDemoEnabled = enabled
         if enabled then
             shaderSetModeLabel(ShaderDemoPreset)
@@ -10842,20 +11116,29 @@ do
         "Realistic rain, wet surfaces and adaptable budget. Everything restores when the mode is disabled.",
         10
     )
-    AutoTabShaders:CreateToggle("Reflejos húmedos", "Wet reflections", false, function(enabled)
+    AutoTabShaders:CreateToggle("Reflejos húmedos", "Wet reflections", ShaderReflections.Enabled, function(enabled)
         ShaderReflections:SetEnabled(enabled)
+        shaderQueuePersistence()
     end)
-    AutoTabShaders:CreateToggle("Contacto del personaje", "Character contact", false, function(enabled)
+    AutoTabShaders:CreateToggle("Sombras de modelos", "Model shadows", ShaderReflections.ShadowEnabled, function(enabled)
+        ShaderReflections:SetShadowEnabled(enabled)
+        shaderQueuePersistence()
+    end)
+    AutoTabShaders:CreateToggle("Contacto del personaje", "Character contact", ShaderReflections.ContactEnabled, function(enabled)
         ShaderReflections:SetContactEnabled(enabled)
+        shaderQueuePersistence()
     end)
-    AutoTabShaders:CreateToggle("Lluvia física", "Physical rain", false, function(enabled)
+    AutoTabShaders:CreateToggle("Lluvia física", "Physical rain", ShaderRain.Enabled, function(enabled)
         ShaderRain:SetEnabled(enabled)
+        shaderQueuePersistence()
     end)
-    AutoTabShaders:CreateToggle("Audio de lluvia", "Rain audio", true, function(enabled)
+    AutoTabShaders:CreateToggle("Audio de lluvia", "Rain audio", ShaderRain.SoundEnabled, function(enabled)
         ShaderRain:SetSoundEnabled(enabled)
+        shaderQueuePersistence()
     end)
-    AutoTabShaders:CreateToggle("Relámpagos dinámicos", "Dynamic lightning", false, function(enabled)
+    AutoTabShaders:CreateToggle("Relámpagos dinámicos", "Dynamic lightning", ShaderRain.StormEnabled, function(enabled)
         ShaderRain:SetStormEnabled(enabled)
+        shaderQueuePersistence()
     end)
     AutoTabShaders:CreateButton("Calidad ligera", "Lite quality", function()
         shaderSetQuality("Lite")
@@ -10878,6 +11161,7 @@ do
             local report = ShaderManager:Apply(patch, options or {})
             shaderWarn(report, "Aplicación manual")
             ShaderCustomRefresh()
+            if report and report.ok then shaderQueuePersistence() end
             return report
         end,
         ApplyPreset = function(name, options)
@@ -10886,6 +11170,7 @@ do
             shaderWarn(report, "Preset " .. tostring(name))
             shaderSetModeLabel(name)
             ShaderCustomRefresh()
+            if report and report.ok then shaderQueuePersistence() end
             return report
         end,
         RegisterPreset = function(name, preset)
@@ -10940,6 +11225,9 @@ do
                 SetSceneCoverage = function(value) ShaderReflections:SetSceneCoverage(value) end,
                 SetContactEnabled = function(value) ShaderReflections:SetContactEnabled(value) end,
                 SetContactStrength = function(value) ShaderReflections:SetContactStrength(value) end,
+                SetModelDetailEnabled = function(value) ShaderReflections:SetModelDetailEnabled(value) end,
+                SetShadowEnabled = function(value) ShaderReflections:SetShadowEnabled(value) end,
+                SetShadowStrength = function(value) ShaderReflections:SetShadowStrength(value) end,
                 Refresh = function() ShaderReflections:Refresh() end,
                 IsEnabled = function() return ShaderReflections.Enabled end,
             },
