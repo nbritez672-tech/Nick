@@ -8864,7 +8864,7 @@ do
                 ClockTime = 15.5, GeographicLatitude = 40, Brightness = 1.20,
                 Ambient = Color3.fromRGB(41, 46, 59), OutdoorAmbient = Color3.fromRGB(71, 77, 89),
                 ColorShift_Top = Color3.fromRGB(128, 148, 184), ColorShift_Bottom = Color3.fromRGB(51, 61, 82),
-                EnvironmentDiffuseScale = 0.50, EnvironmentSpecularScale = 0.30,
+                EnvironmentDiffuseScale = 0.50, EnvironmentSpecularScale = 0.82,
                 ExposureCompensation = -0.10, GlobalShadows = true, ShadowSoftness = 0.85,
                 FogColor = Color3.fromRGB(87, 99, 122), FogStart = 20, FogEnd = 700,
             },
@@ -8882,6 +8882,31 @@ do
             Terrain = {
                 WaterColor = Color3.fromRGB(31, 56, 77), WaterReflectance = 0.55,
                 WaterTransparency = 0.25, WaterWaveSize = 0.20, WaterWaveSpeed = 12,
+            },
+        },
+        Stormfront = {
+            Lighting = {
+                ClockTime = 16.2, GeographicLatitude = 42, Brightness = 0.95,
+                Ambient = Color3.fromRGB(31, 36, 50), OutdoorAmbient = Color3.fromRGB(58, 67, 82),
+                ColorShift_Top = Color3.fromRGB(111, 133, 176), ColorShift_Bottom = Color3.fromRGB(38, 49, 72),
+                EnvironmentDiffuseScale = 0.42, EnvironmentSpecularScale = 0.84,
+                ExposureCompensation = -0.18, GlobalShadows = true, ShadowSoftness = 0.92,
+                FogColor = Color3.fromRGB(67, 79, 104), FogStart = 14, FogEnd = 520,
+            },
+            Atmosphere = {
+                Density = 0.44, Offset = 0.20, Color = Color3.fromRGB(91, 113, 153),
+                Decay = Color3.fromRGB(35, 43, 66), Glare = 0.03, Haze = 3.10,
+            },
+            Clouds = {Cover = 0.94, Density = 0.86, Color = Color3.fromRGB(57, 66, 86)},
+            ColorCorrectionEffect = {Enabled = true, Brightness = -0.08, Contrast = 0.16, Saturation = -0.20, TintColor = Color3.fromRGB(192, 214, 255)},
+            BloomEffect = {Enabled = true, Intensity = 0.05, Size = 8, Threshold = 2.2},
+            BlurEffect = {Enabled = false, Size = 0},
+            DepthOfFieldEffect = {Enabled = true, FarIntensity = 0.10, FocusDistance = 52, InFocusRadius = 24, NearIntensity = 0.03},
+            SunRaysEffect = {Enabled = false, Intensity = 0, Spread = 0.50},
+            ColorGradingEffect = {Enabled = false, TonemapperPreset = Enum.TonemapperPreset.Default},
+            Terrain = {
+                WaterColor = Color3.fromRGB(21, 42, 64), WaterReflectance = 0.70,
+                WaterTransparency = 0.20, WaterWaveSize = 0.30, WaterWaveSpeed = 15,
             },
         },
         Cinematic = {
@@ -9172,6 +9197,243 @@ do
 
     local ShaderManager = ShaderCore.new()
 
+    --// SHADERS OVERDRIVE: efectos locales, reversibles y con presupuesto fijo.
+    --// No usa assets externos ni altera los scripts/pestañas fuera de Shaders.
+    local ShaderQualityProfiles = {
+        Lite = {reflectionRadius = 42, reflectionLimit = 45, rainRate = 42, rainRadius = 25},
+        Balanced = {reflectionRadius = 60, reflectionLimit = 85, rainRate = 72, rainRadius = 34},
+        Cinematic = {reflectionRadius = 78, reflectionLimit = 130, rainRate = 108, rainRadius = 44},
+    }
+    local ShaderSceneQuality = "Balanced"
+
+    local function shaderQualityProfile()
+        return ShaderQualityProfiles[ShaderSceneQuality] or ShaderQualityProfiles.Balanced
+    end
+
+    local ShaderReflections = {
+        Enabled = false,
+        Intensity = 0.28,
+        Original = {},
+        Applied = {},
+        Connection = nil,
+        Elapsed = 0,
+    }
+
+    function ShaderReflections:_root()
+        local character = LocalPlayer and LocalPlayer.Character
+        return character, character and (character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart)
+    end
+
+    function ShaderReflections:_scan(origin, radius, character)
+        local ok, parts = pcall(function()
+            local params = OverlapParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = character and {character} or {}
+            return workspace:GetPartBoundsInRadius(origin, radius, params)
+        end)
+        if ok and type(parts) == "table" then return parts end
+        return {}
+    end
+
+    function ShaderReflections:Refresh()
+        if not self.Enabled then return end
+        local character, root = self:_root()
+        if not root then return end
+        local profile = shaderQualityProfile()
+        local active, count = {}, 0
+        for _, part in ipairs(self:_scan(root.Position, profile.reflectionRadius, character)) do
+            if count >= profile.reflectionLimit then break end
+            local isFloor = part:IsA("BasePart") and math.abs(part.CFrame.UpVector.Y) >= 0.58
+            local visible = isFloor and part.Transparency < 0.86 and part.Size.X * part.Size.Z >= 5
+            if visible and not part:IsDescendantOf(character) and part.Material ~= Enum.Material.Neon then
+                local ok, current = pcall(function() return part.Reflectance end)
+                if ok then
+                    if self.Original[part] == nil then self.Original[part] = current end
+                    local multiplier = (part.Material == Enum.Material.Glass or part.Material == Enum.Material.Ice) and 1 or 0.72
+                    pcall(function() part.Reflectance = math.clamp(self.Original[part] + self.Intensity * multiplier, 0, 0.72) end)
+                    active[part] = true
+                    count = count + 1
+                end
+            end
+        end
+        for part in pairs(self.Applied) do
+            if not active[part] then
+                local original = self.Original[part]
+                if original ~= nil and part and part.Parent then pcall(function() part.Reflectance = original end) end
+                self.Original[part] = nil
+            end
+        end
+        self.Applied = active
+    end
+
+    function ShaderReflections:Restore()
+        for part, original in pairs(self.Original) do
+            if part and part.Parent then pcall(function() part.Reflectance = original end) end
+        end
+        self.Original, self.Applied = {}, {}
+    end
+
+    function ShaderReflections:SetIntensity(value)
+        self.Intensity = math.clamp(tonumber(value) or self.Intensity, 0.05, 0.60)
+        if self.Enabled then self:Refresh() end
+    end
+
+    function ShaderReflections:SetEnabled(enabled)
+        enabled = enabled == true
+        if self.Enabled == enabled then
+            if enabled then self:Refresh() end
+            return
+        end
+        self.Enabled = enabled
+        if not enabled then
+            if self.Connection then self.Connection:Disconnect(); self.Connection = nil end
+            self:Restore()
+            return
+        end
+        self:Refresh()
+        self.Elapsed = 0
+        self.Connection = RunService.Heartbeat:Connect(function(delta)
+            self.Elapsed = self.Elapsed + delta
+            if self.Elapsed >= 1.15 then
+                self.Elapsed = 0
+                self:Refresh()
+            end
+        end)
+    end
+
+    local ShaderRain = {
+        Enabled = false,
+        StormEnabled = false,
+        Intensity = 0.72,
+        Rig = nil,
+        Emitter = nil,
+        FollowConnection = nil,
+        StormToken = 0,
+    }
+
+    function ShaderRain:_destroyRig()
+        if self.FollowConnection then self.FollowConnection:Disconnect(); self.FollowConnection = nil end
+        if self.Rig and self.Rig.Parent then pcall(function() self.Rig:Destroy() end) end
+        self.Rig, self.Emitter = nil, nil
+    end
+
+    function ShaderRain:_syncVisuals()
+        if self.Emitter then self.Emitter.Rate = math.floor(shaderQualityProfile().rainRate * self.Intensity) end
+    end
+
+    function ShaderRain:_createRig()
+        if self.Rig and self.Rig.Parent and self.Emitter then return end
+        local existing = workspace:FindFirstChild("YinYangShader_RainRig")
+        if existing then pcall(function() existing:Destroy() end) end
+        local rig = Instance.new("Part")
+        rig.Name = "YinYangShader_RainRig"
+        rig.Anchored, rig.CanCollide, rig.CanQuery, rig.CanTouch, rig.CastShadow = true, false, false, false, false
+        rig.Transparency, rig.Size = 1, Vector3.new(68, 1, 68)
+        rig.Parent = workspace
+
+        local emitter = Instance.new("ParticleEmitter")
+        emitter.Name = "YinYangShader_Rain"
+        emitter.Enabled = false
+        emitter.EmissionDirection = Enum.NormalId.Bottom
+        emitter.Shape = Enum.ParticleEmitterShape.Box
+        emitter.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+        emitter.ShapeInOut = Enum.ParticleEmitterShapeInOut.Outward
+        emitter.Orientation = Enum.ParticleOrientation.VelocityParallel
+        emitter.Color = ColorSequence.new(Color3.fromRGB(188, 211, 255), Color3.fromRGB(225, 238, 255))
+        emitter.LightInfluence, emitter.LightEmission = 0.78, 0
+        emitter.Lifetime, emitter.Speed = NumberRange.new(1.05, 1.45), NumberRange.new(62, 76)
+        emitter.Acceleration, emitter.Drag, emitter.VelocityInheritance = Vector3.new(2, -44, 0), 0.8, 0.18
+        emitter.SpreadAngle = Vector2.new(8, 8)
+        emitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 0.16), NumberSequenceKeypoint.new(1, 0.08)})
+        emitter.Squash = NumberSequence.new(1.7)
+        emitter.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 0.34), NumberSequenceKeypoint.new(0.85, 0.46), NumberSequenceKeypoint.new(1, 1)})
+        emitter.Parent = rig
+        self.Rig, self.Emitter = rig, emitter
+
+        self.FollowConnection = RunService.RenderStepped:Connect(function()
+            local character = LocalPlayer and LocalPlayer.Character
+            local root = character and (character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart)
+            if not root or not rig.Parent then return end
+            local profile = shaderQualityProfile()
+            rig.Size = Vector3.new(profile.rainRadius * 2, 1, profile.rainRadius * 2)
+            rig.CFrame = CFrame.new(root.Position + Vector3.new(0, 30, 0))
+            local sheltered = false
+            pcall(function()
+                local params = RaycastParams.new()
+                params.FilterType = Enum.RaycastFilterType.Exclude
+                params.FilterDescendantsInstances = {character, rig}
+                params.IgnoreWater = true
+                sheltered = workspace:Raycast(root.Position + Vector3.new(0, 2, 0), Vector3.new(0, 34, 0), params) ~= nil
+            end)
+            emitter.Enabled = self.Enabled and not sheltered
+        end)
+    end
+
+    function ShaderRain:SetIntensity(value)
+        self.Intensity = math.clamp(tonumber(value) or self.Intensity, 0.20, 1)
+        self:_syncVisuals()
+    end
+
+    function ShaderRain:Flash()
+        if not self.Enabled then return end
+        local brightness, exposure = ShaderLightingService.Brightness, ShaderLightingService.ExposureCompensation
+        TweenService:Create(ShaderLightingService, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Brightness = math.min(8, brightness + 1.35), ExposureCompensation = math.min(2, exposure + 0.42)}):Play()
+        task.delay(0.10, function()
+            if self.Enabled then
+                TweenService:Create(ShaderLightingService, TweenInfo.new(0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Brightness = brightness, ExposureCompensation = exposure}):Play()
+            end
+        end)
+    end
+
+    function ShaderRain:SetStormEnabled(enabled)
+        self.StormEnabled = enabled == true
+        self.StormToken = self.StormToken + 1
+        local token = self.StormToken
+        if not self.Enabled or not self.StormEnabled then return end
+        task.spawn(function()
+            while self.Enabled and self.StormEnabled and token == self.StormToken do
+                task.wait(math.random(7, 13))
+                if self.Enabled and self.StormEnabled and token == self.StormToken then
+                    self:Flash()
+                    if math.random() > 0.55 then task.wait(0.18); self:Flash() end
+                end
+            end
+        end)
+    end
+
+    function ShaderRain:SetEnabled(enabled)
+        self.Enabled = enabled == true
+        if not self.Enabled then
+            self.StormToken = self.StormToken + 1
+            self:_destroyRig()
+            return
+        end
+        self:_createRig()
+        self:_syncVisuals()
+        if self.StormEnabled then self:SetStormEnabled(true) end
+    end
+
+    function ShaderRain:Destroy()
+        self.Enabled, self.StormEnabled = false, false
+        self.StormToken = self.StormToken + 1
+        self:_destroyRig()
+    end
+
+    local function shaderSetQuality(name)
+        if not ShaderQualityProfiles[name] then return false end
+        ShaderSceneQuality = name
+        if ShaderReflections.Enabled then ShaderReflections:Refresh() end
+        ShaderRain:_syncVisuals()
+        return true
+    end
+
+    local function shaderRestoreImmersive()
+        ShaderRain:Destroy()
+        ShaderReflections.Enabled = false
+        if ShaderReflections.Connection then ShaderReflections.Connection:Disconnect(); ShaderReflections.Connection = nil end
+        ShaderReflections:Restore()
+    end
+
     --// ══════════════════════════════════════════════════════════════════════════════
     --// REDISEÑO VISUAL: MODOS SEPARADOS + VENTANA PERSONALIZADO
     --// Los sliders de esta ventana son propios de Shaders; no usan CreateSlider.
@@ -9193,11 +9455,30 @@ do
         end
     end
 
+    local function shaderSyncImmersivePreset(name)
+        if name == "Rain" or name == "Stormfront" then
+            ShaderReflections:SetIntensity(name == "Stormfront" and 0.36 or 0.28)
+            ShaderReflections:SetEnabled(true)
+            ShaderRain:SetIntensity(name == "Stormfront" and 0.95 or 0.72)
+            ShaderRain:SetEnabled(true)
+            ShaderRain:SetStormEnabled(name == "Stormfront")
+        else
+            ShaderRain:Destroy()
+            ShaderReflections:SetEnabled(false)
+        end
+    end
+
+    local function shaderRestoreAll(options)
+        shaderRestoreImmersive()
+        return ShaderManager:Restore(options or {})
+    end
+
     local function shaderApplyPreset(name, tween)
         local report = ShaderManager:ApplyPreset(name, {
             tween = tween == true,
             duration = 1,
         })
+        if report.ok then shaderSyncImmersivePreset(name) end
         shaderWarn(report, "Preset " .. tostring(name))
         if ShaderCustomRefresh then
             task.defer(ShaderCustomRefresh)
@@ -9491,6 +9772,10 @@ do
 
     local function shaderCreateToggle(parent, spec)
         local state = shaderExistingBool(spec.target, spec.property, spec.default)
+        if type(spec.getValue) == "function" then
+            local ok, result = pcall(spec.getValue)
+            if ok then state = result == true end
+        end
         local holder = mk("Frame", {
             Parent = parent,
             Size = UDim2.new(1, 0, 0, 66),
@@ -9592,7 +9877,11 @@ do
             state = newValue == true
             applyVisual(true)
             if invoke then
-                shaderApplySingle(spec.target, spec.property, state)
+                if type(spec.onChange) == "function" then
+                    pcall(spec.onChange, state)
+                else
+                    shaderApplySingle(spec.target, spec.property, state)
+                end
             end
         end
 
@@ -9604,6 +9893,10 @@ do
         ShaderCustomControls[spec.id] = {
             refresh = function()
                 local refreshed = shaderExistingBool(spec.target, spec.property, state)
+                if type(spec.getValue) == "function" then
+                    local ok, result = pcall(spec.getValue)
+                    if ok then refreshed = result == true end
+                end
                 state = refreshed
                 applyVisual(false)
             end,
@@ -9615,6 +9908,10 @@ do
 
     local function shaderCreateSlider(parent, spec)
         local value = shaderExistingNumber(spec.target, spec.property, spec.default)
+        if type(spec.getValue) == "function" then
+            local ok, result = pcall(spec.getValue)
+            if ok and type(result) == "number" then value = result end
+        end
         local holder = mk("Frame", {
             Parent = parent,
             Size = UDim2.new(1, 0, 0, 88),
@@ -9745,7 +10042,11 @@ do
             thumb.Position = UDim2.new(0, 14 + math.max(0, bar.AbsoluteSize.X - 16) * percent, 0, 47)
             valueLabel.Text = shaderFormatValue(value)
             if invoke then
-                shaderApplySingle(spec.target, spec.property, value)
+                if type(spec.onChange) == "function" then
+                    pcall(spec.onChange, value)
+                else
+                    shaderApplySingle(spec.target, spec.property, value)
+                end
             end
         end
 
@@ -9779,7 +10080,12 @@ do
 
         ShaderCustomControls[spec.id] = {
             refresh = function()
-                setValue(shaderExistingNumber(spec.target, spec.property, value), false)
+                local refreshed = shaderExistingNumber(spec.target, spec.property, value)
+                if type(spec.getValue) == "function" then
+                    local ok, result = pcall(spec.getValue)
+                    if ok and type(result) == "number" then refreshed = result end
+                end
+                setValue(refreshed, false)
             end,
             set = function(newValue)
                 setValue(newValue, false)
@@ -9836,6 +10142,13 @@ do
             {id = "SunRaysIntensity", es = "Intensidad", en = "Intensity", min = 0, max = 1, default = 0.08, step = 0.01, target = "SunRaysEffect", property = "Intensity"},
             {id = "SunRaysSpread", es = "Extensión", en = "Spread", min = 0, max = 1, default = 0.65, step = 0.01, target = "SunRaysEffect", property = "Spread"},
             {id = "SunRaysEnabled", es = "SunRays activo", en = "SunRays enabled", default = false, target = "SunRaysEffect", property = "Enabled", toggle = true},
+
+            {section = {"Overdrive local", "Local overdrive", "Efectos visuales locales con límites de distancia, partes y tasa de partículas.", "Local visual effects with distance, part and particle-rate limits."}},
+            {id = "WetReflections", es = "Reflejos húmedos", en = "Wet reflections", default = false, target = "Lighting", property = "EnvironmentSpecularScale", toggle = true, getValue = function() return ShaderReflections.Enabled end, onChange = function(value) ShaderReflections:SetEnabled(value) end},
+            {id = "ReflectionIntensity", es = "Intensidad de reflejo", en = "Reflection intensity", min = 0.05, max = 0.60, default = 0.28, step = 0.01, target = "Lighting", property = "EnvironmentSpecularScale", getValue = function() return ShaderReflections.Intensity end, onChange = function(value) ShaderReflections:SetIntensity(value) end},
+            {id = "PhysicalRain", es = "Lluvia física", en = "Physical rain", default = false, target = "Lighting", property = "GlobalShadows", toggle = true, getValue = function() return ShaderRain.Enabled end, onChange = function(value) ShaderRain:SetEnabled(value) end},
+            {id = "RainIntensity", es = "Densidad de lluvia", en = "Rain density", min = 0.20, max = 1, default = 0.72, step = 0.01, target = "Lighting", property = "Brightness", getValue = function() return ShaderRain.Intensity end, onChange = function(value) ShaderRain:SetIntensity(value) end},
+            {id = "StormMode", es = "Relámpagos dinámicos", en = "Dynamic lightning", default = false, target = "Lighting", property = "GlobalShadows", toggle = true, getValue = function() return ShaderRain.StormEnabled end, onChange = function(value) ShaderRain:SetStormEnabled(value) end},
         }
     end
 
@@ -10066,7 +10379,7 @@ do
         restore.MouseButton1Click:Connect(function()
             playSound(Sounds.Click, 0.45)
             ShaderDemoEnabled = false
-            local report = ShaderManager:Restore()
+            local report = shaderRestoreAll()
             shaderWarn(report, "Restauración personalizada")
             shaderSetModeLabel("Original")
             ShaderCustomRefresh()
@@ -10121,7 +10434,7 @@ do
             shaderSetModeLabel(ShaderDemoPreset)
             shaderApplyPreset(ShaderDemoPreset, true)
         else
-            local report = ShaderManager:Restore()
+            local report = shaderRestoreAll()
             shaderWarn(report, "Restauración de demo")
             shaderSetModeLabel("Original")
         end
@@ -10155,6 +10468,7 @@ do
         {"Atardecer", "Sunset", "Sunset", "Tonos dorados con contraste cinematográfico"},
         {"Noche", "Night", "Night", "Azules profundos y ambiente nocturno"},
         {"Lluvia", "Rain", "Rain", "Niebla fría y cielo cubierto"},
+        {"Tormenta", "Stormfront", "Stormfront", "Lluvia local, reflejos húmedos y relámpagos dinámicos", "Local rain, wet reflections and dynamic lightning"},
         {"Cinemático", "Cinematic", "Cinematic", "Profundidad de campo y look de película"},
         {"Glow Vibrante", "Vibrant Glow", "VibrantGlow", "Pasteles saturados · bloom intenso y atmósfera etérea", "Saturated pastels · intense bloom and ethereal atmosphere"},
         {"Retro", "Retro", "Retro", "Gradación clásica y color vintage"},
@@ -10184,13 +10498,39 @@ do
         descEN = "Return to the game's saved lighting",
         callback = function()
             ShaderDemoEnabled = false
-            local report = ShaderManager:Restore()
+            local report = shaderRestoreAll()
             shaderWarn(report, "Restauración")
             shaderSetModeLabel("Original")
             ShaderCustomRefresh()
         end,
     })
     shaderSetModeLabel("Morning")
+
+    AutoTabShaders:CreateDivider()
+    AutoTabShaders:CreateLabel("Overdrive local", "Local overdrive", 13)
+    AutoTabShaders:CreateLabel(
+        "Lluvia realista, superficies húmedas y presupuesto adaptable. Todo se restaura al desactivar el modo.",
+        "Realistic rain, wet surfaces and adaptable budget. Everything restores when the mode is disabled.",
+        10
+    )
+    AutoTabShaders:CreateToggle("Reflejos húmedos", "Wet reflections", false, function(enabled)
+        ShaderReflections:SetEnabled(enabled)
+    end)
+    AutoTabShaders:CreateToggle("Lluvia física", "Physical rain", false, function(enabled)
+        ShaderRain:SetEnabled(enabled)
+    end)
+    AutoTabShaders:CreateToggle("Relámpagos dinámicos", "Dynamic lightning", false, function(enabled)
+        ShaderRain:SetStormEnabled(enabled)
+    end)
+    AutoTabShaders:CreateButton("Calidad ligera", "Lite quality", function()
+        shaderSetQuality("Lite")
+    end)
+    AutoTabShaders:CreateButton("Calidad equilibrada", "Balanced quality", function()
+        shaderSetQuality("Balanced")
+    end)
+    AutoTabShaders:CreateButton("Calidad cinemática", "Cinematic quality", function()
+        shaderSetQuality("Cinematic")
+    end)
 
     Window.Shaders = {
         Core = ShaderManager,
@@ -10204,6 +10544,7 @@ do
         end,
         ApplyPreset = function(name, options)
             local report = ShaderManager:ApplyPreset(name, options or {})
+            if report.ok then shaderSyncImmersivePreset(name) end
             shaderWarn(report, "Preset " .. tostring(name))
             shaderSetModeLabel(name)
             ShaderCustomRefresh()
@@ -10222,7 +10563,7 @@ do
             return report
         end,
         Restore = function(options)
-            local report = ShaderManager:Restore(options or {})
+            local report = shaderRestoreAll(options)
             ShaderCustomRefresh()
             return report
         end,
@@ -10250,6 +10591,23 @@ do
         IsDemoEnabled = function()
             return ShaderDemoEnabled
         end,
+        Overdrive = {
+            SetQuality = shaderSetQuality,
+            GetQuality = function() return ShaderSceneQuality end,
+            Reflections = {
+                SetEnabled = function(value) ShaderReflections:SetEnabled(value) end,
+                SetIntensity = function(value) ShaderReflections:SetIntensity(value) end,
+                Refresh = function() ShaderReflections:Refresh() end,
+                IsEnabled = function() return ShaderReflections.Enabled end,
+            },
+            Rain = {
+                SetEnabled = function(value) ShaderRain:SetEnabled(value) end,
+                SetIntensity = function(value) ShaderRain:SetIntensity(value) end,
+                SetStormEnabled = function(value) ShaderRain:SetStormEnabled(value) end,
+                IsEnabled = function() return ShaderRain.Enabled end,
+            },
+            Restore = shaderRestoreImmersive,
+        },
     }
 
     --// La demo inicia activa, mientras la edición detallada queda dentro de Personalizado.
