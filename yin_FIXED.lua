@@ -9724,6 +9724,11 @@ do
     local ShaderCustomBackdrop = nil
     local ShaderCustomRefresh = function() end
     local ShaderCustomControls = {}
+    --// Estado manual de Custom: cada cambio elegido por el usuario prevalece
+    --// sobre los refrescos visuales hasta que un preset o Restaurar original
+    --// reemplace deliberadamente la escena.
+    local ShaderCustomOverrides = {}
+    local ShaderCustomActiveSlider = nil
     local ShaderDemoEnabled = true
     local ShaderDemoPreset = "Morning"
     local ShaderModeLabel = nil
@@ -9734,6 +9739,11 @@ do
         if report and not report.ok then
             warn("[YinYang Shaders] " .. tostring(context) .. " tuvo errores", report.failed)
         end
+    end
+
+    local function shaderClearCustomOverrides()
+        ShaderCustomOverrides = {}
+        ShaderCustomActiveSlider = nil
     end
 
     local function shaderSyncImmersivePreset(name)
@@ -9753,7 +9763,11 @@ do
 
     local function shaderRestoreAll(options)
         shaderRestoreImmersive()
-        return ShaderManager:Restore(options or {})
+        local report = ShaderManager:Restore(options or {})
+        if report and report.ok then
+            shaderClearCustomOverrides()
+        end
+        return report
     end
 
     local function shaderApplyPreset(name, tween)
@@ -9762,6 +9776,7 @@ do
             duration = 1,
         })
         if report.ok then
+            shaderClearCustomOverrides()
             shaderSyncImmersivePreset(name)
             task.delay(tween and 1.05 or 0, function()
                 ShaderManualLighting.Brightness = ShaderLightingService.Brightness
@@ -9803,6 +9818,28 @@ do
         return fallback
     end
 
+    local function shaderReadCustomValue(spec, fallback, valueType)
+        local override = ShaderCustomOverrides[spec.id]
+        if type(override) == valueType then
+            return override
+        end
+
+        local current = fallback
+        if valueType == "boolean" then
+            current = shaderExistingBool(spec.target, spec.property, fallback)
+        else
+            current = shaderExistingNumber(spec.target, spec.property, fallback)
+        end
+
+        if type(spec.getValue) == "function" then
+            local ok, result = pcall(spec.getValue)
+            if ok and type(result) == valueType then
+                current = result
+            end
+        end
+        return current
+    end
+
     local function shaderFormatValue(value)
         if math.abs(value) >= 100 then
             return string.format("%.0f", value)
@@ -9818,6 +9855,7 @@ do
     end
 
     local function shaderDisconnectAll()
+        ShaderCustomActiveSlider = nil
         for index = #ShaderCustomConnections, 1, -1 do
             pcall(function() ShaderCustomConnections[index]:Disconnect() end)
             ShaderCustomConnections[index] = nil
@@ -10002,7 +10040,7 @@ do
             Size = UDim2.new(1, -8, 0, 0),
             AutomaticSize = Enum.AutomaticSize.Y,
             BackgroundColor3 = Theme.Secondary,
-            BackgroundTransparency = 0.18,
+            BackgroundTransparency = 0.24,
             BorderSizePixel = 0,
             ClipsDescendants = true,
             ZIndex = 312,
@@ -10063,16 +10101,12 @@ do
     end
 
     local function shaderCreateToggle(parent, spec)
-        local state = shaderExistingBool(spec.target, spec.property, spec.default)
-        if type(spec.getValue) == "function" then
-            local ok, result = pcall(spec.getValue)
-            if ok then state = result == true end
-        end
+        local state = shaderReadCustomValue(spec, spec.default, "boolean")
         local holder = mk("Frame", {
             Parent = parent,
             Size = UDim2.new(1, 0, 0, 66),
             BackgroundColor3 = Theme.Background,
-            BackgroundTransparency = 0.08,
+            BackgroundTransparency = 0.12,
             BorderSizePixel = 0,
             ZIndex = 313,
         })
@@ -10169,6 +10203,7 @@ do
             state = newValue == true
             applyVisual(true)
             if invoke then
+                ShaderCustomOverrides[spec.id] = state
                 if type(spec.onChange) == "function" then
                     pcall(spec.onChange, state)
                 else
@@ -10184,11 +10219,7 @@ do
 
         ShaderCustomControls[spec.id] = {
             refresh = function()
-                local refreshed = shaderExistingBool(spec.target, spec.property, state)
-                if type(spec.getValue) == "function" then
-                    local ok, result = pcall(spec.getValue)
-                    if ok then refreshed = result == true end
-                end
+                local refreshed = shaderReadCustomValue(spec, state, "boolean")
                 state = refreshed
                 applyVisual(false)
             end,
@@ -10199,16 +10230,12 @@ do
     end
 
     local function shaderCreateSlider(parent, spec)
-        local value = shaderExistingNumber(spec.target, spec.property, spec.default)
-        if type(spec.getValue) == "function" then
-            local ok, result = pcall(spec.getValue)
-            if ok and type(result) == "number" then value = result end
-        end
+        local value = shaderReadCustomValue(spec, spec.default, "number")
         local holder = mk("Frame", {
             Parent = parent,
             Size = UDim2.new(1, 0, 0, 88),
             BackgroundColor3 = Theme.Background,
-            BackgroundTransparency = 0.08,
+            BackgroundTransparency = 0.12,
             BorderSizePixel = 0,
             ZIndex = 313,
         })
@@ -10334,6 +10361,7 @@ do
             thumb.Position = UDim2.new(0, 14 + math.max(0, bar.AbsoluteSize.X - 16) * percent, 0, 47)
             valueLabel.Text = shaderFormatValue(value)
             if invoke then
+                ShaderCustomOverrides[spec.id] = value
                 if type(spec.onChange) == "function" then
                     pcall(spec.onChange, value)
                 else
@@ -10350,6 +10378,8 @@ do
 
         local function beginDrag(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                if ShaderCustomActiveSlider and ShaderCustomActiveSlider ~= spec.id then return end
+                ShaderCustomActiveSlider = spec.id
                 dragging = true
                 setFromInput(input)
             end
@@ -10358,13 +10388,14 @@ do
         shaderAddConnection(bar.InputBegan:Connect(beginDrag))
         shaderAddConnection(thumb.InputBegan:Connect(beginDrag))
         shaderAddConnection(UserInputService.InputChanged:Connect(function(input)
-            if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            if dragging and ShaderCustomActiveSlider == spec.id and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
                 setFromInput(input)
             end
         end))
         shaderAddConnection(UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            if ShaderCustomActiveSlider == spec.id and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
                 dragging = false
+                ShaderCustomActiveSlider = nil
             end
         end))
 
@@ -10372,11 +10403,7 @@ do
 
         ShaderCustomControls[spec.id] = {
             refresh = function()
-                local refreshed = shaderExistingNumber(spec.target, spec.property, value)
-                if type(spec.getValue) == "function" then
-                    local ok, result = pcall(spec.getValue)
-                    if ok and type(result) == "number" then refreshed = result end
-                end
+                local refreshed = shaderReadCustomValue(spec, value, "number")
                 setValue(refreshed, false)
             end,
             set = function(newValue)
@@ -10477,10 +10504,10 @@ do
             Parent = Window.ScreenGui,
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.new(0.5, 0, 0.52, 0),
-            Size = UDim2.fromOffset(440, 360),
+            Size = UDim2.fromOffset(420, 340),
             Active = true,
             BackgroundColor3 = Theme.Background,
-            BackgroundTransparency = 0.12,
+            BackgroundTransparency = 0.20,
             BorderSizePixel = 0,
             ClipsDescendants = true,
             ZIndex = 301,
@@ -10491,8 +10518,8 @@ do
         buildAnimatedBorder(ShaderCustomWindow, Theme.Accent, UDim.new(0, 16), true)
         mk("UISizeConstraint", {
             Parent = ShaderCustomWindow,
-            MinSize = Vector2.new(380, 300),
-            MaxSize = Vector2.new(500, 420),
+            MinSize = Vector2.new(360, 280),
+            MaxSize = Vector2.new(470, 390),
         })
 
         local header = mk("Frame", {
@@ -10500,7 +10527,7 @@ do
             Size = UDim2.new(1, -8, 0, 72),
             Position = UDim2.new(0, 4, 0, 4),
             BackgroundColor3 = Theme.Secondary,
-            BackgroundTransparency = 0.14,
+            BackgroundTransparency = 0.22,
             BorderSizePixel = 0,
             ZIndex = 302,
         })
