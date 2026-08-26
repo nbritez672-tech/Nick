@@ -9203,6 +9203,7 @@ do
         Lite = {reflectionRadius = 42, reflectionLimit = 45, rainRate = 42, rainRadius = 25},
         Balanced = {reflectionRadius = 60, reflectionLimit = 85, rainRate = 72, rainRadius = 34},
         Cinematic = {reflectionRadius = 78, reflectionLimit = 130, rainRate = 108, rainRadius = 44},
+        Ultra = {reflectionRadius = 104, reflectionLimit = 220, rainRate = 132, rainRadius = 54},
     }
     local ShaderSceneQuality = "Balanced"
 
@@ -9213,6 +9214,8 @@ do
     local ShaderReflections = {
         Enabled = false,
         Intensity = 0.28,
+        Wetness = 0.82,
+        SurfaceMode = "All",
         ContactEnabled = false,
         ContactStrength = 0.24,
         ContactRig = nil,
@@ -9240,6 +9243,17 @@ do
         return {}
     end
 
+    function ShaderReflections:_surfaceMultiplier(part)
+        local material = part.Material
+        if material == Enum.Material.Neon or material == Enum.Material.ForceField then return nil end
+        if material == Enum.Material.Glass or material == Enum.Material.Ice then return 1 end
+        if material == Enum.Material.Metal or material == Enum.Material.DiamondPlate then return 0.94 end
+        if material == Enum.Material.Marble or material == Enum.Material.SmoothPlastic or material == Enum.Material.Plastic then return 0.88 end
+        if material == Enum.Material.Water then return 0.96 end
+        if material == Enum.Material.Fabric or material == Enum.Material.Grass or material == Enum.Material.Sand then return 0.46 end
+        return 0.72
+    end
+
     function ShaderReflections:_clearContact()
         if self.ContactRig and self.ContactRig.Parent then pcall(function() self.ContactRig:Destroy() end) end
         self.ContactRig, self.ContactParts = nil, {}
@@ -9257,7 +9271,7 @@ do
         params.FilterDescendantsInstances = {character}
         params.IgnoreWater = false
         local hit = workspace:Raycast(root.Position + Vector3.new(0, 2, 0), Vector3.new(0, -12, 0), params)
-        if not hit or not hit.Instance or math.abs(hit.Normal.Y) < 0.70 then
+        if not hit or not hit.Instance or math.abs(hit.Normal.Y) < 0.28 then
             self:_clearContact()
             return
         end
@@ -9282,7 +9296,11 @@ do
                 end
                 local size = source.Size
                 proxy.Size = Vector3.new(math.max(0.16, size.X * 0.70), 0.028, math.max(0.16, size.Z * 0.70))
-                proxy.CFrame = CFrame.new(source.Position.X, hit.Position.Y + 0.031 + index * 0.0002, source.Position.Z) * CFrame.Angles(0, math.rad(source.Orientation.Y), 0)
+                local right = root.CFrame.RightVector
+                if math.abs(right:Dot(hit.Normal)) > 0.92 then right = root.CFrame.LookVector end
+                local back = hit.Normal:Cross(right).Unit
+                right = back:Cross(hit.Normal).Unit
+                proxy.CFrame = CFrame.fromMatrix(hit.Position + hit.Normal * (0.031 + index * 0.0002), right, hit.Normal, back)
                 proxy.Color = source.Color:Lerp(Color3.fromRGB(152, 191, 236), 0.58)
                 proxy.Transparency = math.clamp(0.88 - self.ContactStrength * 0.38, 0.58, 0.84)
                 active[source] = true
@@ -9304,14 +9322,15 @@ do
         local active, count = {}, 0
         for _, part in ipairs(self:_scan(root.Position, profile.reflectionRadius, character)) do
             if count >= profile.reflectionLimit then break end
-            local isFloor = part:IsA("BasePart") and math.abs(part.CFrame.UpVector.Y) >= 0.58
-            local visible = isFloor and part.Transparency < 0.86 and part.Size.X * part.Size.Z >= 5
-            if visible and not part:IsDescendantOf(character) and part.Material ~= Enum.Material.Neon then
+            local visible = part:IsA("BasePart") and part.Transparency < 0.96 and part.Size.Magnitude >= 1.2
+            local floorOnly = self.SurfaceMode == "Floors"
+            local supportsMode = not floorOnly or math.abs(part.CFrame.UpVector.Y) >= 0.42
+            local multiplier = visible and supportsMode and self:_surfaceMultiplier(part)
+            if multiplier and not part:IsDescendantOf(character) then
                 local ok, current = pcall(function() return part.Reflectance end)
                 if ok then
                     if self.Original[part] == nil then self.Original[part] = current end
-                    local multiplier = (part.Material == Enum.Material.Glass or part.Material == Enum.Material.Ice) and 1 or 0.72
-                    pcall(function() part.Reflectance = math.clamp(self.Original[part] + self.Intensity * multiplier, 0, 0.72) end)
+                    pcall(function() part.Reflectance = math.clamp(self.Original[part] + self.Intensity * self.Wetness * multiplier, 0, 0.90) end)
                     active[part] = true
                     count = count + 1
                 end
@@ -9338,6 +9357,16 @@ do
 
     function ShaderReflections:SetIntensity(value)
         self.Intensity = math.clamp(tonumber(value) or self.Intensity, 0.05, 0.60)
+        if self.Enabled then self:Refresh() end
+    end
+
+    function ShaderReflections:SetWetness(value)
+        self.Wetness = math.clamp(tonumber(value) or self.Wetness, 0.10, 1)
+        if self.Enabled then self:Refresh() end
+    end
+
+    function ShaderReflections:SetSurfaceMode(mode)
+        self.SurfaceMode = mode == "Floors" and "Floors" or "All"
         if self.Enabled then self:Refresh() end
     end
 
@@ -10320,6 +10349,8 @@ do
             {section = {"Overdrive local", "Local overdrive", "Efectos visuales locales con límites de distancia, partes y tasa de partículas.", "Local visual effects with distance, part and particle-rate limits."}},
             {id = "WetReflections", es = "Reflejos húmedos", en = "Wet reflections", default = false, target = "Lighting", property = "EnvironmentSpecularScale", toggle = true, getValue = function() return ShaderReflections.Enabled end, onChange = function(value) ShaderReflections:SetEnabled(value) end},
             {id = "ReflectionIntensity", es = "Intensidad de reflejo", en = "Reflection intensity", min = 0.05, max = 0.60, default = 0.28, step = 0.01, target = "Lighting", property = "EnvironmentSpecularScale", getValue = function() return ShaderReflections.Intensity end, onChange = function(value) ShaderReflections:SetIntensity(value) end},
+            {id = "Wetness", es = "Acabado mojado", en = "Wet finish", min = 0.10, max = 1, default = 0.82, step = 0.01, target = "Lighting", property = "EnvironmentSpecularScale", getValue = function() return ShaderReflections.Wetness end, onChange = function(value) ShaderReflections:SetWetness(value) end},
+            {id = "AllSurfaceCoverage", es = "Cubrir paredes y techos", en = "Cover walls and ceilings", default = true, target = "Lighting", property = "EnvironmentSpecularScale", toggle = true, getValue = function() return ShaderReflections.SurfaceMode == "All" end, onChange = function(value) ShaderReflections:SetSurfaceMode(value and "All" or "Floors") end},
             {id = "ContactReflection", es = "Contacto del personaje", en = "Character contact", default = false, target = "Lighting", property = "EnvironmentSpecularScale", toggle = true, getValue = function() return ShaderReflections.ContactEnabled end, onChange = function(value) ShaderReflections:SetContactEnabled(value) end},
             {id = "ContactStrength", es = "Detalle de contacto", en = "Contact detail", min = 0.05, max = 0.60, default = 0.24, step = 0.01, target = "Lighting", property = "EnvironmentSpecularScale", getValue = function() return ShaderReflections.ContactStrength end, onChange = function(value) ShaderReflections:SetContactStrength(value) end},
             {id = "PhysicalRain", es = "Lluvia física", en = "Physical rain", default = false, target = "Lighting", property = "GlobalShadows", toggle = true, getValue = function() return ShaderRain.Enabled end, onChange = function(value) ShaderRain:SetEnabled(value) end},
@@ -10329,6 +10360,77 @@ do
             {id = "RainShelter", es = "Respetar techos", en = "Respect roofs", default = false, target = "Lighting", property = "GlobalShadows", toggle = true, getValue = function() return ShaderRain.RespectShelter end, onChange = function(value) ShaderRain:SetRespectShelter(value) end},
             {id = "StormMode", es = "Relámpagos dinámicos", en = "Dynamic lightning", default = false, target = "Lighting", property = "GlobalShadows", toggle = true, getValue = function() return ShaderRain.StormEnabled end, onChange = function(value) ShaderRain:SetStormEnabled(value) end},
         }
+    end
+
+    local ShaderProfileFile = "YinYang_ShaderProfile_v1.json"
+
+    local function shaderCaptureProfile()
+        local controls = {}
+        for _, spec in ipairs(shaderCustomSpecs()) do
+            if not spec.section then
+                local value = nil
+                if type(spec.getValue) == "function" then
+                    local ok, result = pcall(spec.getValue)
+                    if ok then value = result end
+                else
+                    local values = ShaderManager:Read(spec.target, {[spec.property] = true})
+                    if values then value = values[spec.property] end
+                end
+                if type(value) == "number" or type(value) == "boolean" then controls[spec.id] = value end
+            end
+        end
+        return {
+            version = 1,
+            savedAt = os.time(),
+            quality = ShaderSceneQuality,
+            controls = controls,
+        }
+    end
+
+    local function shaderSaveProfile()
+        if type(writefile) ~= "function" then return false, "writefile_unavailable" end
+        local ok, message = pcall(function()
+            writefile(ShaderProfileFile, HttpService:JSONEncode(shaderCaptureProfile()))
+        end)
+        return ok, ok and nil or message
+    end
+
+    local function shaderApplyProfile(profile)
+        if type(profile) ~= "table" or type(profile.controls) ~= "table" then return false, "invalid_profile" end
+        if type(profile.quality) == "string" then shaderSetQuality(profile.quality) end
+        for _, spec in ipairs(shaderCustomSpecs()) do
+            if not spec.section then
+                local value = profile.controls[spec.id]
+                if type(value) == "number" or type(value) == "boolean" then
+                    if type(spec.onChange) == "function" then
+                        pcall(spec.onChange, value)
+                    else
+                        shaderApplySingle(spec.target, spec.property, value)
+                    end
+                end
+            end
+        end
+        ShaderCustomRefresh()
+        return true
+    end
+
+    local function shaderLoadProfile()
+        if type(readfile) ~= "function" or type(isfile) ~= "function" then return false, "readfile_unavailable" end
+        local ok, profile = pcall(function()
+            if not isfile(ShaderProfileFile) then return nil end
+            return HttpService:JSONDecode(readfile(ShaderProfileFile))
+        end)
+        if not ok then return false, profile end
+        if not profile then return false, "profile_missing" end
+        return shaderApplyProfile(profile)
+    end
+
+    local function shaderDeleteProfile()
+        if type(delfile) ~= "function" then return false, "delfile_unavailable" end
+        local ok, message = pcall(function()
+            if not isfile or isfile(ShaderProfileFile) then delfile(ShaderProfileFile) end
+        end)
+        return ok, ok and nil or message
     end
 
     local function shaderOpenCustomWindow()
@@ -10356,7 +10458,7 @@ do
             Parent = Window.ScreenGui,
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.new(0.5, 0, 0.52, 0),
-            Size = UDim2.fromOffset(440, 360),
+            Size = UDim2.fromOffset(480, 470),
             Active = true,
             BackgroundColor3 = Theme.Background,
             BackgroundTransparency = 0.02,
@@ -10371,7 +10473,7 @@ do
         mk("UISizeConstraint", {
             Parent = ShaderCustomWindow,
             MinSize = Vector2.new(380, 300),
-            MaxSize = Vector2.new(500, 420),
+            MaxSize = Vector2.new(620, 640),
         })
 
         local header = mk("Frame", {
@@ -10466,6 +10568,8 @@ do
             CanvasSize = UDim2.new(0, 0, 0, 0),
             AutomaticCanvasSize = Enum.AutomaticSize.Y,
             ScrollingDirection = Enum.ScrollingDirection.Y,
+            Active = true,
+            ScrollingEnabled = true,
             ZIndex = 302,
         })
         scroll:SetAttribute("ThemeRole", "Background")
@@ -10716,6 +10820,26 @@ do
     AutoTabShaders:CreateButton("Calidad cinemática", "Cinematic quality", function()
         shaderSetQuality("Cinematic")
     end)
+    AutoTabShaders:CreateButton("Cobertura máxima", "Ultra coverage", function()
+        shaderSetQuality("Ultra")
+    end)
+    AutoTabShaders:CreateDivider()
+    AutoTabShaders:CreateLabel("Perfil local", "Local profile", 13)
+    AutoTabShaders:CreateButton("Guardar mis shaders", "Save my shaders", function()
+        local ok, reason = shaderSaveProfile()
+        shaderSetModeLabel(ok and "Perfil guardado" or "Guardado no disponible")
+        if not ok then warn("[YinYang Shaders] No se pudo guardar el perfil: " .. tostring(reason)) end
+    end)
+    AutoTabShaders:CreateButton("Cargar mis shaders", "Load my shaders", function()
+        local ok, reason = shaderLoadProfile()
+        shaderSetModeLabel(ok and "Perfil cargado" or "Perfil no disponible")
+        if not ok then warn("[YinYang Shaders] No se pudo cargar el perfil: " .. tostring(reason)) end
+    end)
+    AutoTabShaders:CreateButton("Borrar perfil guardado", "Delete saved profile", function()
+        local ok, reason = shaderDeleteProfile()
+        shaderSetModeLabel(ok and "Perfil borrado" or "Borrado no disponible")
+        if not ok then warn("[YinYang Shaders] No se pudo borrar el perfil: " .. tostring(reason)) end
+    end)
 
     Window.Shaders = {
         Core = ShaderManager,
@@ -10782,6 +10906,8 @@ do
             Reflections = {
                 SetEnabled = function(value) ShaderReflections:SetEnabled(value) end,
                 SetIntensity = function(value) ShaderReflections:SetIntensity(value) end,
+                SetWetness = function(value) ShaderReflections:SetWetness(value) end,
+                SetSurfaceMode = function(value) ShaderReflections:SetSurfaceMode(value) end,
                 SetContactEnabled = function(value) ShaderReflections:SetContactEnabled(value) end,
                 SetContactStrength = function(value) ShaderReflections:SetContactStrength(value) end,
                 Refresh = function() ShaderReflections:Refresh() end,
@@ -10797,6 +10923,14 @@ do
                 IsEnabled = function() return ShaderRain.Enabled end,
             },
             Restore = shaderRestoreImmersive,
+        },
+        Profiles = {
+            File = ShaderProfileFile,
+            Capture = shaderCaptureProfile,
+            Apply = shaderApplyProfile,
+            Save = shaderSaveProfile,
+            Load = shaderLoadProfile,
+            Delete = shaderDeleteProfile,
         },
     }
 
