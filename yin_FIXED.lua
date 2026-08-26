@@ -9213,6 +9213,11 @@ do
     local ShaderReflections = {
         Enabled = false,
         Intensity = 0.28,
+        ContactEnabled = false,
+        ContactStrength = 0.24,
+        ContactRig = nil,
+        ContactParts = {},
+        ContactElapsed = 0,
         Original = {},
         Applied = {},
         Connection = nil,
@@ -9233,6 +9238,62 @@ do
         end)
         if ok and type(parts) == "table" then return parts end
         return {}
+    end
+
+    function ShaderReflections:_clearContact()
+        if self.ContactRig and self.ContactRig.Parent then pcall(function() self.ContactRig:Destroy() end) end
+        self.ContactRig, self.ContactParts = nil, {}
+    end
+
+    function ShaderReflections:_refreshContact()
+        if not self.ContactEnabled or not self.Enabled then
+            self:_clearContact()
+            return
+        end
+        local character, root = self:_root()
+        if not character or not root then return end
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = {character}
+        params.IgnoreWater = false
+        local hit = workspace:Raycast(root.Position + Vector3.new(0, 2, 0), Vector3.new(0, -12, 0), params)
+        if not hit or not hit.Instance or math.abs(hit.Normal.Y) < 0.70 then
+            self:_clearContact()
+            return
+        end
+        if not self.ContactRig or not self.ContactRig.Parent then
+            local rig = Instance.new("Folder")
+            rig.Name = "YinYangShader_ContactReflection"
+            rig.Parent = workspace
+            self.ContactRig, self.ContactParts = rig, {}
+        end
+        local active, index = {}, 0
+        for _, source in ipairs(character:GetDescendants()) do
+            if source:IsA("BasePart") and source.Transparency < 0.95 then
+                index = index + 1
+                local proxy = self.ContactParts[source]
+                if not proxy or not proxy.Parent then
+                    proxy = Instance.new("Part")
+                    proxy.Name = "ContactReflection"
+                    proxy.Anchored, proxy.CanCollide, proxy.CanQuery, proxy.CanTouch, proxy.CastShadow = true, false, false, false, false
+                    proxy.Material = Enum.Material.Glass
+                    proxy.Parent = self.ContactRig
+                    self.ContactParts[source] = proxy
+                end
+                local size = source.Size
+                proxy.Size = Vector3.new(math.max(0.16, size.X * 0.70), 0.028, math.max(0.16, size.Z * 0.70))
+                proxy.CFrame = CFrame.new(source.Position.X, hit.Position.Y + 0.031 + index * 0.0002, source.Position.Z) * CFrame.Angles(0, math.rad(source.Orientation.Y), 0)
+                proxy.Color = source.Color:Lerp(Color3.fromRGB(152, 191, 236), 0.58)
+                proxy.Transparency = math.clamp(0.88 - self.ContactStrength * 0.38, 0.58, 0.84)
+                active[source] = true
+            end
+        end
+        for source, proxy in pairs(self.ContactParts) do
+            if not active[source] then
+                if proxy and proxy.Parent then proxy:Destroy() end
+                self.ContactParts[source] = nil
+            end
+        end
     end
 
     function ShaderReflections:Refresh()
@@ -9264,6 +9325,7 @@ do
             end
         end
         self.Applied = active
+        self:_refreshContact()
     end
 
     function ShaderReflections:Restore()
@@ -9271,11 +9333,22 @@ do
             if part and part.Parent then pcall(function() part.Reflectance = original end) end
         end
         self.Original, self.Applied = {}, {}
+        self:_clearContact()
     end
 
     function ShaderReflections:SetIntensity(value)
         self.Intensity = math.clamp(tonumber(value) or self.Intensity, 0.05, 0.60)
         if self.Enabled then self:Refresh() end
+    end
+
+    function ShaderReflections:SetContactStrength(value)
+        self.ContactStrength = math.clamp(tonumber(value) or self.ContactStrength, 0.05, 0.60)
+        self:_refreshContact()
+    end
+
+    function ShaderReflections:SetContactEnabled(enabled)
+        self.ContactEnabled = enabled == true
+        self:_refreshContact()
     end
 
     function ShaderReflections:SetEnabled(enabled)
@@ -9294,6 +9367,11 @@ do
         self.Elapsed = 0
         self.Connection = RunService.Heartbeat:Connect(function(delta)
             self.Elapsed = self.Elapsed + delta
+            self.ContactElapsed = self.ContactElapsed + delta
+            if self.ContactElapsed >= 0.12 then
+                self.ContactElapsed = 0
+                self:_refreshContact()
+            end
             if self.Elapsed >= 1.15 then
                 self.Elapsed = 0
                 self:Refresh()
@@ -9307,18 +9385,90 @@ do
         Intensity = 0.72,
         Rig = nil,
         Emitter = nil,
+        Drops = {},
+        Random = Random.new(),
+        Sound = nil,
+        SoundEnabled = true,
+        SoundVolume = 0.34,
+        RespectShelter = false,
         FollowConnection = nil,
         StormToken = 0,
     }
 
     function ShaderRain:_destroyRig()
         if self.FollowConnection then self.FollowConnection:Disconnect(); self.FollowConnection = nil end
+        if self.Sound then pcall(function() self.Sound:Stop() end) end
         if self.Rig and self.Rig.Parent then pcall(function() self.Rig:Destroy() end) end
-        self.Rig, self.Emitter = nil, nil
+        self.Rig, self.Emitter, self.Drops = nil, nil, {}
     end
 
     function ShaderRain:_syncVisuals()
         if self.Emitter then self.Emitter.Rate = math.floor(shaderQualityProfile().rainRate * self.Intensity) end
+        if self.Sound then self.Sound.Volume = self.SoundVolume * self.Intensity end
+    end
+
+    function ShaderRain:_ensureSound()
+        if self.Sound and self.Sound.Parent then return self.Sound end
+        local existing = SoundService:FindFirstChild("YinYangShader_RainLoop")
+        if existing and existing:IsA("Sound") then
+            self.Sound = existing
+            return existing
+        end
+        local sound = Instance.new("Sound")
+        sound.Name = "YinYangShader_RainLoop"
+        sound.SoundId = "rbxassetid://107459242972988"
+        sound.Looped, sound.Volume = true, self.SoundVolume * self.Intensity
+        sound.Parent = SoundService
+        self.Sound = sound
+        return sound
+    end
+
+    function ShaderRain:_dropTargetCount()
+        return math.clamp(math.floor(shaderQualityProfile().rainRate * self.Intensity * 0.42), 12, 50)
+    end
+
+    function ShaderRain:_resetDrop(drop, root)
+        local radius = shaderQualityProfile().rainRadius
+        local x = (self.Random:NextNumber() - 0.5) * radius * 2
+        local z = (self.Random:NextNumber() - 0.5) * radius * 2
+        drop.Size = Vector3.new(0.035, self.Random:NextNumber(0.65, 1.65), 0.035)
+        drop.CFrame = CFrame.new(root.Position + Vector3.new(x, self.Random:NextNumber(7, 32), z))
+        drop:SetAttribute("RainSpeed", self.Random:NextNumber(84, 112))
+    end
+
+    function ShaderRain:_ensureDrops(root)
+        local target = self:_dropTargetCount()
+        while #self.Drops < target do
+            local drop = Instance.new("Part")
+            drop.Name = "YinYangShader_RainDrop"
+            drop.Anchored, drop.CanCollide, drop.CanQuery, drop.CanTouch, drop.CastShadow = true, false, false, false, false
+            drop.Material = Enum.Material.Glass
+            drop.Color = Color3.fromRGB(190, 216, 255)
+            drop.Transparency = 0.28
+            drop.Parent = self.Rig
+            self:_resetDrop(drop, root)
+            table.insert(self.Drops, drop)
+        end
+        while #self.Drops > target do
+            local drop = table.remove(self.Drops)
+            if drop and drop.Parent then drop:Destroy() end
+        end
+    end
+
+    function ShaderRain:_updateDrops(root, delta, sheltered)
+        self:_ensureDrops(root)
+        for _, drop in ipairs(self.Drops) do
+            if drop and drop.Parent then
+                drop.Transparency = sheltered and 1 or math.clamp(0.40 - self.Intensity * 0.18, 0.16, 0.36)
+                if not sheltered then
+                    local speed = drop:GetAttribute("RainSpeed") or 96
+                    drop.CFrame = drop.CFrame + Vector3.new(2 * delta, -speed * delta, 0)
+                    if drop.Position.Y < root.Position.Y - 5 or (drop.Position - root.Position).Magnitude > shaderQualityProfile().rainRadius * 1.25 then
+                        self:_resetDrop(drop, root)
+                    end
+                end
+            end
+        end
     end
 
     function ShaderRain:_createRig()
@@ -9350,7 +9500,7 @@ do
         emitter.Parent = rig
         self.Rig, self.Emitter = rig, emitter
 
-        self.FollowConnection = RunService.RenderStepped:Connect(function()
+        self.FollowConnection = RunService.RenderStepped:Connect(function(delta)
             local character = LocalPlayer and LocalPlayer.Character
             local root = character and (character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart)
             if not root or not rig.Parent then return end
@@ -9358,20 +9508,41 @@ do
             rig.Size = Vector3.new(profile.rainRadius * 2, 1, profile.rainRadius * 2)
             rig.CFrame = CFrame.new(root.Position + Vector3.new(0, 30, 0))
             local sheltered = false
-            pcall(function()
-                local params = RaycastParams.new()
-                params.FilterType = Enum.RaycastFilterType.Exclude
-                params.FilterDescendantsInstances = {character, rig}
-                params.IgnoreWater = true
-                sheltered = workspace:Raycast(root.Position + Vector3.new(0, 2, 0), Vector3.new(0, 34, 0), params) ~= nil
-            end)
-            emitter.Enabled = self.Enabled and not sheltered
+            if self.RespectShelter then
+                pcall(function()
+                    local params = RaycastParams.new()
+                    params.FilterType = Enum.RaycastFilterType.Exclude
+                    params.FilterDescendantsInstances = {character, rig}
+                    params.IgnoreWater = true
+                    sheltered = workspace:Raycast(root.Position + Vector3.new(0, 2, 0), Vector3.new(0, 34, 0), params) ~= nil
+                end)
+            end
+            self:_updateDrops(root, delta, sheltered)
         end)
     end
 
     function ShaderRain:SetIntensity(value)
         self.Intensity = math.clamp(tonumber(value) or self.Intensity, 0.20, 1)
         self:_syncVisuals()
+    end
+
+    function ShaderRain:SetSoundEnabled(enabled)
+        self.SoundEnabled = enabled == true
+        local sound = self:_ensureSound()
+        if self.Enabled and self.SoundEnabled then
+            pcall(function() sound:Play() end)
+        else
+            pcall(function() sound:Stop() end)
+        end
+    end
+
+    function ShaderRain:SetSoundVolume(value)
+        self.SoundVolume = math.clamp(tonumber(value) or self.SoundVolume, 0, 1)
+        self:_syncVisuals()
+    end
+
+    function ShaderRain:SetRespectShelter(enabled)
+        self.RespectShelter = enabled == true
     end
 
     function ShaderRain:Flash()
@@ -9410,6 +9581,7 @@ do
         end
         self:_createRig()
         self:_syncVisuals()
+        if self.SoundEnabled then pcall(function() self:_ensureSound():Play() end) end
         if self.StormEnabled then self:SetStormEnabled(true) end
     end
 
@@ -9459,11 +9631,13 @@ do
         if name == "Rain" or name == "Stormfront" then
             ShaderReflections:SetIntensity(name == "Stormfront" and 0.36 or 0.28)
             ShaderReflections:SetEnabled(true)
+            ShaderReflections:SetContactEnabled(true)
             ShaderRain:SetIntensity(name == "Stormfront" and 0.95 or 0.72)
             ShaderRain:SetEnabled(true)
             ShaderRain:SetStormEnabled(name == "Stormfront")
         else
             ShaderRain:Destroy()
+            ShaderReflections:SetContactEnabled(false)
             ShaderReflections:SetEnabled(false)
         end
     end
@@ -10146,8 +10320,13 @@ do
             {section = {"Overdrive local", "Local overdrive", "Efectos visuales locales con límites de distancia, partes y tasa de partículas.", "Local visual effects with distance, part and particle-rate limits."}},
             {id = "WetReflections", es = "Reflejos húmedos", en = "Wet reflections", default = false, target = "Lighting", property = "EnvironmentSpecularScale", toggle = true, getValue = function() return ShaderReflections.Enabled end, onChange = function(value) ShaderReflections:SetEnabled(value) end},
             {id = "ReflectionIntensity", es = "Intensidad de reflejo", en = "Reflection intensity", min = 0.05, max = 0.60, default = 0.28, step = 0.01, target = "Lighting", property = "EnvironmentSpecularScale", getValue = function() return ShaderReflections.Intensity end, onChange = function(value) ShaderReflections:SetIntensity(value) end},
+            {id = "ContactReflection", es = "Contacto del personaje", en = "Character contact", default = false, target = "Lighting", property = "EnvironmentSpecularScale", toggle = true, getValue = function() return ShaderReflections.ContactEnabled end, onChange = function(value) ShaderReflections:SetContactEnabled(value) end},
+            {id = "ContactStrength", es = "Detalle de contacto", en = "Contact detail", min = 0.05, max = 0.60, default = 0.24, step = 0.01, target = "Lighting", property = "EnvironmentSpecularScale", getValue = function() return ShaderReflections.ContactStrength end, onChange = function(value) ShaderReflections:SetContactStrength(value) end},
             {id = "PhysicalRain", es = "Lluvia física", en = "Physical rain", default = false, target = "Lighting", property = "GlobalShadows", toggle = true, getValue = function() return ShaderRain.Enabled end, onChange = function(value) ShaderRain:SetEnabled(value) end},
             {id = "RainIntensity", es = "Densidad de lluvia", en = "Rain density", min = 0.20, max = 1, default = 0.72, step = 0.01, target = "Lighting", property = "Brightness", getValue = function() return ShaderRain.Intensity end, onChange = function(value) ShaderRain:SetIntensity(value) end},
+            {id = "RainAudio", es = "Audio de lluvia", en = "Rain audio", default = true, target = "Lighting", property = "GlobalShadows", toggle = true, getValue = function() return ShaderRain.SoundEnabled end, onChange = function(value) ShaderRain:SetSoundEnabled(value) end},
+            {id = "RainAudioVolume", es = "Volumen de lluvia", en = "Rain volume", min = 0, max = 1, default = 0.34, step = 0.01, target = "Lighting", property = "Brightness", getValue = function() return ShaderRain.SoundVolume end, onChange = function(value) ShaderRain:SetSoundVolume(value) end},
+            {id = "RainShelter", es = "Respetar techos", en = "Respect roofs", default = false, target = "Lighting", property = "GlobalShadows", toggle = true, getValue = function() return ShaderRain.RespectShelter end, onChange = function(value) ShaderRain:SetRespectShelter(value) end},
             {id = "StormMode", es = "Relámpagos dinámicos", en = "Dynamic lightning", default = false, target = "Lighting", property = "GlobalShadows", toggle = true, getValue = function() return ShaderRain.StormEnabled end, onChange = function(value) ShaderRain:SetStormEnabled(value) end},
         }
     end
@@ -10516,8 +10695,14 @@ do
     AutoTabShaders:CreateToggle("Reflejos húmedos", "Wet reflections", false, function(enabled)
         ShaderReflections:SetEnabled(enabled)
     end)
+    AutoTabShaders:CreateToggle("Contacto del personaje", "Character contact", false, function(enabled)
+        ShaderReflections:SetContactEnabled(enabled)
+    end)
     AutoTabShaders:CreateToggle("Lluvia física", "Physical rain", false, function(enabled)
         ShaderRain:SetEnabled(enabled)
+    end)
+    AutoTabShaders:CreateToggle("Audio de lluvia", "Rain audio", true, function(enabled)
+        ShaderRain:SetSoundEnabled(enabled)
     end)
     AutoTabShaders:CreateToggle("Relámpagos dinámicos", "Dynamic lightning", false, function(enabled)
         ShaderRain:SetStormEnabled(enabled)
@@ -10597,12 +10782,17 @@ do
             Reflections = {
                 SetEnabled = function(value) ShaderReflections:SetEnabled(value) end,
                 SetIntensity = function(value) ShaderReflections:SetIntensity(value) end,
+                SetContactEnabled = function(value) ShaderReflections:SetContactEnabled(value) end,
+                SetContactStrength = function(value) ShaderReflections:SetContactStrength(value) end,
                 Refresh = function() ShaderReflections:Refresh() end,
                 IsEnabled = function() return ShaderReflections.Enabled end,
             },
             Rain = {
                 SetEnabled = function(value) ShaderRain:SetEnabled(value) end,
                 SetIntensity = function(value) ShaderRain:SetIntensity(value) end,
+                SetSoundEnabled = function(value) ShaderRain:SetSoundEnabled(value) end,
+                SetSoundVolume = function(value) ShaderRain:SetSoundVolume(value) end,
+                SetRespectShelter = function(value) ShaderRain:SetRespectShelter(value) end,
                 SetStormEnabled = function(value) ShaderRain:SetStormEnabled(value) end,
                 IsEnabled = function() return ShaderRain.Enabled end,
             },
