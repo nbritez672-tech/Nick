@@ -9216,6 +9216,12 @@ do
         Intensity = 0.28,
         Wetness = 0.82,
         SurfaceMode = "All",
+        SceneCoverage = true,
+        SceneQueue = {},
+        SceneCursor = 1,
+        SceneElapsed = 0,
+        SceneBuilding = false,
+        SceneComplete = false,
         ContactEnabled = false,
         ContactStrength = 0.24,
         ContactRig = nil,
@@ -9252,6 +9258,50 @@ do
         if material == Enum.Material.Water then return 0.96 end
         if material == Enum.Material.Fabric or material == Enum.Material.Grass or material == Enum.Material.Sand then return 0.46 end
         return 0.72
+    end
+
+    function ShaderReflections:_applyWetPart(part)
+        if not part or not part.Parent or not part:IsA("BasePart") then return false end
+        if part.Transparency >= 0.96 or part.Size.Magnitude < 1.2 then return false end
+        local floorOnly = self.SurfaceMode == "Floors"
+        if floorOnly and math.abs(part.CFrame.UpVector.Y) < 0.42 then return false end
+        local multiplier = self:_surfaceMultiplier(part)
+        if not multiplier then return false end
+        local ok, current = pcall(function() return part.Reflectance end)
+        if not ok then return false end
+        if self.Original[part] == nil then self.Original[part] = current end
+        local applied = pcall(function()
+            part.Reflectance = math.clamp(self.Original[part] + self.Intensity * self.Wetness * multiplier, 0, 0.90)
+        end)
+        if applied then self.Applied[part] = true end
+        return applied
+    end
+
+    function ShaderReflections:QueueSceneCoverage()
+        if self.SceneBuilding or self.SceneComplete or not self.SceneCoverage then return end
+        self.SceneBuilding, self.SceneQueue, self.SceneCursor = true, {}, 1
+        task.spawn(function()
+            local descendants = workspace:GetDescendants()
+            for index, instance in ipairs(descendants) do
+                if self.Enabled and instance:IsA("BasePart") then table.insert(self.SceneQueue, instance) end
+                if index % 240 == 0 then task.wait() end
+            end
+            self.SceneBuilding = false
+            self.SceneComplete = true
+        end)
+    end
+
+    function ShaderReflections:_processSceneCoverage(limit)
+        if not self.SceneCoverage then return end
+        if self.SceneCursor > #self.SceneQueue then
+            return
+        end
+        local processed = 0
+        while processed < limit and self.SceneCursor <= #self.SceneQueue do
+            self:_applyWetPart(self.SceneQueue[self.SceneCursor])
+            self.SceneCursor = self.SceneCursor + 1
+            processed = processed + 1
+        end
     end
 
     function ShaderReflections:_clearContact()
@@ -9322,28 +9372,22 @@ do
         local active, count = {}, 0
         for _, part in ipairs(self:_scan(root.Position, profile.reflectionRadius, character)) do
             if count >= profile.reflectionLimit then break end
-            local visible = part:IsA("BasePart") and part.Transparency < 0.96 and part.Size.Magnitude >= 1.2
-            local floorOnly = self.SurfaceMode == "Floors"
-            local supportsMode = not floorOnly or math.abs(part.CFrame.UpVector.Y) >= 0.42
-            local multiplier = visible and supportsMode and self:_surfaceMultiplier(part)
-            if multiplier and not part:IsDescendantOf(character) then
-                local ok, current = pcall(function() return part.Reflectance end)
-                if ok then
-                    if self.Original[part] == nil then self.Original[part] = current end
-                    pcall(function() part.Reflectance = math.clamp(self.Original[part] + self.Intensity * self.Wetness * multiplier, 0, 0.90) end)
-                    active[part] = true
-                    count = count + 1
+            if not part:IsDescendantOf(character) and self:_applyWetPart(part) then
+                active[part] = true
+                count = count + 1
+            end
+        end
+        if not self.SceneCoverage then
+            for part in pairs(self.Applied) do
+                if not active[part] then
+                    local original = self.Original[part]
+                    if original ~= nil and part and part.Parent then pcall(function() part.Reflectance = original end) end
+                    self.Original[part] = nil
+                    self.Applied[part] = nil
                 end
             end
         end
-        for part in pairs(self.Applied) do
-            if not active[part] then
-                local original = self.Original[part]
-                if original ~= nil and part and part.Parent then pcall(function() part.Reflectance = original end) end
-                self.Original[part] = nil
-            end
-        end
-        self.Applied = active
+        if self.SceneCoverage and #self.SceneQueue == 0 then self:QueueSceneCoverage() end
         self:_refreshContact()
     end
 
@@ -9357,17 +9401,36 @@ do
 
     function ShaderReflections:SetIntensity(value)
         self.Intensity = math.clamp(tonumber(value) or self.Intensity, 0.05, 0.60)
-        if self.Enabled then self:Refresh() end
+        if self.Enabled then
+            self.SceneQueue, self.SceneCursor, self.SceneComplete = {}, 1, false
+            self:Refresh()
+        end
     end
 
     function ShaderReflections:SetWetness(value)
         self.Wetness = math.clamp(tonumber(value) or self.Wetness, 0.10, 1)
-        if self.Enabled then self:Refresh() end
+        if self.Enabled then
+            self.SceneQueue, self.SceneCursor, self.SceneComplete = {}, 1, false
+            self:Refresh()
+        end
     end
 
     function ShaderReflections:SetSurfaceMode(mode)
         self.SurfaceMode = mode == "Floors" and "Floors" or "All"
-        if self.Enabled then self:Refresh() end
+        if self.Enabled then
+            self:Restore()
+            self.SceneQueue, self.SceneCursor, self.SceneComplete = {}, 1, false
+            self:Refresh()
+        end
+    end
+
+    function ShaderReflections:SetSceneCoverage(enabled)
+        self.SceneCoverage = enabled == true
+        if self.Enabled then
+            self:Restore()
+            self.SceneQueue, self.SceneCursor, self.SceneComplete = {}, 1, false
+            self:Refresh()
+        end
     end
 
     function ShaderReflections:SetContactStrength(value)
@@ -9390,13 +9453,21 @@ do
         if not enabled then
             if self.Connection then self.Connection:Disconnect(); self.Connection = nil end
             self:Restore()
+            self.SceneQueue, self.SceneCursor, self.SceneComplete = {}, 1, false
             return
         end
+        self.SceneQueue, self.SceneCursor, self.SceneComplete = {}, 1, false
         self:Refresh()
+        self:QueueSceneCoverage()
         self.Elapsed = 0
         self.Connection = RunService.Heartbeat:Connect(function(delta)
             self.Elapsed = self.Elapsed + delta
             self.ContactElapsed = self.ContactElapsed + delta
+            self.SceneElapsed = self.SceneElapsed + delta
+            if self.SceneElapsed >= 0.08 then
+                self.SceneElapsed = 0
+                self:_processSceneCoverage(90)
+            end
             if self.ContactElapsed >= 0.12 then
                 self.ContactElapsed = 0
                 self:_refreshContact()
@@ -9407,6 +9478,11 @@ do
             end
         end)
     end
+
+    local ShaderManualLighting = {
+        Brightness = ShaderLightingService.Brightness,
+        ExposureCompensation = ShaderLightingService.ExposureCompensation,
+    }
 
     local ShaderRain = {
         Enabled = false,
@@ -9576,11 +9652,15 @@ do
 
     function ShaderRain:Flash()
         if not self.Enabled then return end
-        local brightness, exposure = ShaderLightingService.Brightness, ShaderLightingService.ExposureCompensation
+        local brightness = ShaderManualLighting.Brightness or ShaderLightingService.Brightness
+        local exposure = ShaderManualLighting.ExposureCompensation or ShaderLightingService.ExposureCompensation
         TweenService:Create(ShaderLightingService, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Brightness = math.min(8, brightness + 1.35), ExposureCompensation = math.min(2, exposure + 0.42)}):Play()
         task.delay(0.10, function()
             if self.Enabled then
-                TweenService:Create(ShaderLightingService, TweenInfo.new(0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Brightness = brightness, ExposureCompensation = exposure}):Play()
+                TweenService:Create(ShaderLightingService, TweenInfo.new(0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                    Brightness = ShaderManualLighting.Brightness or brightness,
+                    ExposureCompensation = ShaderManualLighting.ExposureCompensation or exposure,
+                }):Play()
             end
         end)
     end
@@ -9681,7 +9761,13 @@ do
             tween = tween == true,
             duration = 1,
         })
-        if report.ok then shaderSyncImmersivePreset(name) end
+        if report.ok then
+            shaderSyncImmersivePreset(name)
+            task.delay(tween and 1.05 or 0, function()
+                ShaderManualLighting.Brightness = ShaderLightingService.Brightness
+                ShaderManualLighting.ExposureCompensation = ShaderLightingService.ExposureCompensation
+            end)
+        end
         shaderWarn(report, "Preset " .. tostring(name))
         if ShaderCustomRefresh then
             task.defer(ShaderCustomRefresh)
@@ -9690,6 +9776,9 @@ do
     end
 
     local function shaderApplySingle(target, property, value)
+        if target == "Lighting" and (property == "Brightness" or property == "ExposureCompensation") then
+            ShaderManualLighting[property] = value
+        end
         local report = ShaderManager:Apply({[target] = {[property] = value}}, {tween = false})
         shaderWarn(report, target .. "." .. property)
         if ShaderCustomRefresh then
@@ -10351,6 +10440,7 @@ do
             {id = "ReflectionIntensity", es = "Intensidad de reflejo", en = "Reflection intensity", min = 0.05, max = 0.60, default = 0.28, step = 0.01, target = "Lighting", property = "EnvironmentSpecularScale", getValue = function() return ShaderReflections.Intensity end, onChange = function(value) ShaderReflections:SetIntensity(value) end},
             {id = "Wetness", es = "Acabado mojado", en = "Wet finish", min = 0.10, max = 1, default = 0.82, step = 0.01, target = "Lighting", property = "EnvironmentSpecularScale", getValue = function() return ShaderReflections.Wetness end, onChange = function(value) ShaderReflections:SetWetness(value) end},
             {id = "AllSurfaceCoverage", es = "Cubrir paredes y techos", en = "Cover walls and ceilings", default = true, target = "Lighting", property = "EnvironmentSpecularScale", toggle = true, getValue = function() return ShaderReflections.SurfaceMode == "All" end, onChange = function(value) ShaderReflections:SetSurfaceMode(value and "All" or "Floors") end},
+            {id = "SceneCoverage", es = "Cobertura de escena", en = "Scene coverage", default = true, target = "Lighting", property = "EnvironmentSpecularScale", toggle = true, getValue = function() return ShaderReflections.SceneCoverage end, onChange = function(value) ShaderReflections:SetSceneCoverage(value) end},
             {id = "ContactReflection", es = "Contacto del personaje", en = "Character contact", default = false, target = "Lighting", property = "EnvironmentSpecularScale", toggle = true, getValue = function() return ShaderReflections.ContactEnabled end, onChange = function(value) ShaderReflections:SetContactEnabled(value) end},
             {id = "ContactStrength", es = "Detalle de contacto", en = "Contact detail", min = 0.05, max = 0.60, default = 0.24, step = 0.01, target = "Lighting", property = "EnvironmentSpecularScale", getValue = function() return ShaderReflections.ContactStrength end, onChange = function(value) ShaderReflections:SetContactStrength(value) end},
             {id = "PhysicalRain", es = "Lluvia física", en = "Physical rain", default = false, target = "Lighting", property = "GlobalShadows", toggle = true, getValue = function() return ShaderRain.Enabled end, onChange = function(value) ShaderRain:SetEnabled(value) end},
@@ -10360,77 +10450,6 @@ do
             {id = "RainShelter", es = "Respetar techos", en = "Respect roofs", default = false, target = "Lighting", property = "GlobalShadows", toggle = true, getValue = function() return ShaderRain.RespectShelter end, onChange = function(value) ShaderRain:SetRespectShelter(value) end},
             {id = "StormMode", es = "Relámpagos dinámicos", en = "Dynamic lightning", default = false, target = "Lighting", property = "GlobalShadows", toggle = true, getValue = function() return ShaderRain.StormEnabled end, onChange = function(value) ShaderRain:SetStormEnabled(value) end},
         }
-    end
-
-    local ShaderProfileFile = "YinYang_ShaderProfile_v1.json"
-
-    local function shaderCaptureProfile()
-        local controls = {}
-        for _, spec in ipairs(shaderCustomSpecs()) do
-            if not spec.section then
-                local value = nil
-                if type(spec.getValue) == "function" then
-                    local ok, result = pcall(spec.getValue)
-                    if ok then value = result end
-                else
-                    local values = ShaderManager:Read(spec.target, {[spec.property] = true})
-                    if values then value = values[spec.property] end
-                end
-                if type(value) == "number" or type(value) == "boolean" then controls[spec.id] = value end
-            end
-        end
-        return {
-            version = 1,
-            savedAt = os.time(),
-            quality = ShaderSceneQuality,
-            controls = controls,
-        }
-    end
-
-    local function shaderSaveProfile()
-        if type(writefile) ~= "function" then return false, "writefile_unavailable" end
-        local ok, message = pcall(function()
-            writefile(ShaderProfileFile, HttpService:JSONEncode(shaderCaptureProfile()))
-        end)
-        return ok, ok and nil or message
-    end
-
-    local function shaderApplyProfile(profile)
-        if type(profile) ~= "table" or type(profile.controls) ~= "table" then return false, "invalid_profile" end
-        if type(profile.quality) == "string" then shaderSetQuality(profile.quality) end
-        for _, spec in ipairs(shaderCustomSpecs()) do
-            if not spec.section then
-                local value = profile.controls[spec.id]
-                if type(value) == "number" or type(value) == "boolean" then
-                    if type(spec.onChange) == "function" then
-                        pcall(spec.onChange, value)
-                    else
-                        shaderApplySingle(spec.target, spec.property, value)
-                    end
-                end
-            end
-        end
-        ShaderCustomRefresh()
-        return true
-    end
-
-    local function shaderLoadProfile()
-        if type(readfile) ~= "function" or type(isfile) ~= "function" then return false, "readfile_unavailable" end
-        local ok, profile = pcall(function()
-            if not isfile(ShaderProfileFile) then return nil end
-            return HttpService:JSONDecode(readfile(ShaderProfileFile))
-        end)
-        if not ok then return false, profile end
-        if not profile then return false, "profile_missing" end
-        return shaderApplyProfile(profile)
-    end
-
-    local function shaderDeleteProfile()
-        if type(delfile) ~= "function" then return false, "delfile_unavailable" end
-        local ok, message = pcall(function()
-            if not isfile or isfile(ShaderProfileFile) then delfile(ShaderProfileFile) end
-        end)
-        return ok, ok and nil or message
     end
 
     local function shaderOpenCustomWindow()
@@ -10458,10 +10477,10 @@ do
             Parent = Window.ScreenGui,
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.new(0.5, 0, 0.52, 0),
-            Size = UDim2.fromOffset(480, 470),
+            Size = UDim2.fromOffset(440, 360),
             Active = true,
             BackgroundColor3 = Theme.Background,
-            BackgroundTransparency = 0.02,
+            BackgroundTransparency = 0.12,
             BorderSizePixel = 0,
             ClipsDescendants = true,
             ZIndex = 301,
@@ -10473,7 +10492,7 @@ do
         mk("UISizeConstraint", {
             Parent = ShaderCustomWindow,
             MinSize = Vector2.new(380, 300),
-            MaxSize = Vector2.new(620, 640),
+            MaxSize = Vector2.new(500, 420),
         })
 
         local header = mk("Frame", {
@@ -10481,7 +10500,7 @@ do
             Size = UDim2.new(1, -8, 0, 72),
             Position = UDim2.new(0, 4, 0, 4),
             BackgroundColor3 = Theme.Secondary,
-            BackgroundTransparency = 0.05,
+            BackgroundTransparency = 0.14,
             BorderSizePixel = 0,
             ZIndex = 302,
         })
@@ -10823,23 +10842,6 @@ do
     AutoTabShaders:CreateButton("Cobertura máxima", "Ultra coverage", function()
         shaderSetQuality("Ultra")
     end)
-    AutoTabShaders:CreateDivider()
-    AutoTabShaders:CreateLabel("Perfil local", "Local profile", 13)
-    AutoTabShaders:CreateButton("Guardar mis shaders", "Save my shaders", function()
-        local ok, reason = shaderSaveProfile()
-        shaderSetModeLabel(ok and "Perfil guardado" or "Guardado no disponible")
-        if not ok then warn("[YinYang Shaders] No se pudo guardar el perfil: " .. tostring(reason)) end
-    end)
-    AutoTabShaders:CreateButton("Cargar mis shaders", "Load my shaders", function()
-        local ok, reason = shaderLoadProfile()
-        shaderSetModeLabel(ok and "Perfil cargado" or "Perfil no disponible")
-        if not ok then warn("[YinYang Shaders] No se pudo cargar el perfil: " .. tostring(reason)) end
-    end)
-    AutoTabShaders:CreateButton("Borrar perfil guardado", "Delete saved profile", function()
-        local ok, reason = shaderDeleteProfile()
-        shaderSetModeLabel(ok and "Perfil borrado" or "Borrado no disponible")
-        if not ok then warn("[YinYang Shaders] No se pudo borrar el perfil: " .. tostring(reason)) end
-    end)
 
     Window.Shaders = {
         Core = ShaderManager,
@@ -10908,6 +10910,7 @@ do
                 SetIntensity = function(value) ShaderReflections:SetIntensity(value) end,
                 SetWetness = function(value) ShaderReflections:SetWetness(value) end,
                 SetSurfaceMode = function(value) ShaderReflections:SetSurfaceMode(value) end,
+                SetSceneCoverage = function(value) ShaderReflections:SetSceneCoverage(value) end,
                 SetContactEnabled = function(value) ShaderReflections:SetContactEnabled(value) end,
                 SetContactStrength = function(value) ShaderReflections:SetContactStrength(value) end,
                 Refresh = function() ShaderReflections:Refresh() end,
@@ -10923,14 +10926,6 @@ do
                 IsEnabled = function() return ShaderRain.Enabled end,
             },
             Restore = shaderRestoreImmersive,
-        },
-        Profiles = {
-            File = ShaderProfileFile,
-            Capture = shaderCaptureProfile,
-            Apply = shaderApplyProfile,
-            Save = shaderSaveProfile,
-            Load = shaderLoadProfile,
-            Delete = shaderDeleteProfile,
         },
     }
 
