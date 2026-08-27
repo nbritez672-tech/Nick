@@ -3494,7 +3494,8 @@ function YinYang:CreateWindow(title_text, startTheme)
         VerticalAlignment = Enum.VerticalAlignment.Top,
     }, TabList)
     mk("UIPadding", {PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6)}, TabList)
-    mk("Frame", {Parent = Body, Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(0, 109, 0, 0), BackgroundColor3 = Theme.Stroke, BackgroundTransparency = 0.82, BorderSizePixel = 0, ZIndex = 8}, Body):SetAttribute("ThemeRole", "Stroke")
+    local TabListDivider = mk("Frame", {Parent = Body, Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(0, 109, 0, 0), BackgroundColor3 = Theme.Stroke, BackgroundTransparency = 0.82, BorderSizePixel = 0, ZIndex = 8}, Body)
+    TabListDivider:SetAttribute("ThemeRole", "Stroke")
 
     local ContentArea = mk("Frame", {
         Size = UDim2.new(1, -110, 1, 0),
@@ -3503,6 +3504,130 @@ function YinYang:CreateWindow(title_text, startTheme)
         ZIndex = 7
     }, Body)
     mk("UIPadding", {PaddingTop = UDim.new(0, 0), PaddingLeft = UDim.new(0, 0), PaddingRight = UDim.new(0, 0), PaddingBottom = UDim.new(0, 0)}, ContentArea)
+
+    --// NAVEGACIÓN COMPACTA: rail de iconos que reutiliza Tab.Select y registra tabs externas.
+    --// No reemplaza TabList: la flecha alterna entre este rail y las pestañas normales.
+    ;(function()
+        local nav = {Compact = false, Entries = {}}
+        nav.Rail = mk("Frame", {
+            Name = "CompactTabRail", Parent = Body, Size = UDim2.new(0, 58, 1, 0),
+            Position = UDim2.new(0, 0, 0, 0), BackgroundColor3 = Theme.Background,
+            BackgroundTransparency = 0.10, BorderSizePixel = 0, Visible = false, ZIndex = 16,
+        })
+        nav.Rail:SetAttribute("ThemeRole", "Background")
+        corner(nav.Rail, 10)
+        stroke(nav.Rail, Theme.Stroke, 1.2, 0.20)
+
+        nav.List = mk("ScrollingFrame", {
+            Name = "CompactTabIcons", Parent = nav.Rail, Size = UDim2.new(1, 0, 1, -48),
+            Position = UDim2.new(0, 0, 0, 4), BackgroundTransparency = 1, BorderSizePixel = 0,
+            ScrollBarThickness = 0, ElasticBehavior = Enum.ElasticBehavior.Never,
+            CanvasPosition = Vector2.new(0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 17,
+        })
+        mk("UIListLayout", {Parent = nav.List, Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, HorizontalAlignment = Enum.HorizontalAlignment.Center}, nav.List)
+        mk("UIPadding", {Parent = nav.List, PaddingTop = UDim.new(0, 3), PaddingBottom = UDim.new(0, 3)}, nav.List)
+
+        local function makeControl(name, text, visible)
+            local button = mk("TextButton", {
+                Name = name, Parent = Body, Size = UDim2.fromOffset(34, 34),
+                Position = UDim2.new(0, 12, 1, -40), BackgroundColor3 = Theme.Secondary,
+                BackgroundTransparency = 0.12, BorderSizePixel = 0, Text = text, TextColor3 = Theme.Text,
+                Font = Enum.Font.GothamBold, TextSize = 23, AutoButtonColor = false, Visible = visible, ZIndex = 22,
+            })
+            button:SetAttribute("ThemeRole", "Secondary")
+            button:SetAttribute("ThemeTextRole", "Text")
+            corner(button, 9)
+            stroke(button, Theme.Stroke, 1.1, 0.28)
+            return button
+        end
+
+        nav.Open = makeControl("CompactNavigationOpen", "‹", true)
+        nav.Close = makeControl("CompactNavigationClose", "›", false)
+
+        function Window._RefreshCompactNavigation()
+            for _, tab in ipairs(Window.Tabs) do
+                local entry = tab.CompactButton
+                if entry and entry.Parent then
+                    local active = tab.Page and tab.Page.Visible
+                    entry.BackgroundColor3 = active and Theme.Accent or Theme.Background
+                    entry.BackgroundTransparency = active and 0.06 or 0.26
+                    local icon = entry:FindFirstChild("Icon")
+                    if icon then icon.ImageColor3 = active and Theme.AccentText or Theme.Text end
+                    local fallback = entry:FindFirstChild("Fallback")
+                    if fallback then fallback.TextColor3 = active and Theme.AccentText or Theme.Text end
+                    local indicator = entry:FindFirstChild("ActiveIndicator")
+                    if indicator then indicator.Visible = active end
+                end
+            end
+        end
+
+        function Window._RegisterCompactTab(tab)
+            if not tab or tab.CompactButton then return end
+            local entry = mk("TextButton", {
+                Name = "CompactTab_" .. tostring(tab.NameSpanish or "Tab"), Parent = nav.List,
+                Size = UDim2.fromOffset(46, 46), BackgroundColor3 = Theme.Background,
+                BackgroundTransparency = 0.26, BorderSizePixel = 0, Text = "", AutoButtonColor = false,
+                LayoutOrder = #Window.Tabs, ZIndex = 18,
+            })
+            entry:SetAttribute("ThemeRole", "Background")
+            corner(entry, 11)
+            stroke(entry, Theme.Stroke, 1.0, 0.42)
+            local icon = tab.IconAsset
+            if type(icon) == "string" and icon ~= "" then
+                mk("ImageLabel", {
+                    Name = "Icon", Parent = entry, Size = UDim2.fromOffset(25, 25),
+                    Position = UDim2.new(0.5, -12, 0.5, -12), BackgroundTransparency = 1,
+                    Image = icon, ImageColor3 = Theme.Text, ScaleType = Enum.ScaleType.Fit, ZIndex = 19,
+                })
+            else
+                local fallback = mk("TextLabel", {
+                    Name = "Fallback", Parent = entry, Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
+                    Text = string.sub(tostring(tab.NameSpanish or "?"), 1, 1), TextColor3 = Theme.Text,
+                    Font = Enum.Font.GothamBold, TextSize = 16, ZIndex = 19,
+                })
+                fallback:SetAttribute("ThemeTextRole", "Text")
+            end
+            local indicator = mk("Frame", {
+                Name = "ActiveIndicator", Parent = entry, Size = UDim2.fromOffset(4, 16),
+                Position = UDim2.new(0, -5, 0.5, -8), BackgroundColor3 = Theme.Accent,
+                BackgroundTransparency = 0, BorderSizePixel = 0, Visible = false, ZIndex = 20,
+            })
+            indicator:SetAttribute("ThemeRole", "Accent")
+            corner(indicator, 999)
+            entry.MouseButton1Click:Connect(function()
+                if tab.Select then tab.Select() end
+            end)
+            entry.MouseEnter:Connect(function()
+                if not (tab.Page and tab.Page.Visible) then
+                    TweenService:Create(entry, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 0.08}):Play()
+                end
+            end)
+            entry.MouseLeave:Connect(function()
+                if not (tab.Page and tab.Page.Visible) then
+                    TweenService:Create(entry, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 0.26}):Play()
+                end
+            end)
+            tab.CompactButton = entry
+            Window._RefreshCompactNavigation()
+        end
+
+        function Window:SetCompactNavigation(enabled)
+            nav.Compact = enabled == true
+            self.CompactNavigation = nav.Compact
+            TabList.Visible = not nav.Compact
+            TabListArt.Visible = not nav.Compact
+            TabListDivider.Visible = not nav.Compact
+            nav.Rail.Visible = nav.Compact
+            nav.Open.Visible = not nav.Compact
+            nav.Close.Visible = nav.Compact
+            ContentArea.Position = nav.Compact and UDim2.new(0, 58, 0, 0) or UDim2.new(0, 110, 0, 0)
+            ContentArea.Size = nav.Compact and UDim2.new(1, -58, 1, 0) or UDim2.new(1, -110, 1, 0)
+            Window._RefreshCompactNavigation()
+        end
+
+        nav.Open.MouseButton1Click:Connect(function() Window:SetCompactNavigation(true) end)
+        nav.Close.MouseButton1Click:Connect(function() Window:SetCompactNavigation(false) end)
+    end)()
 
     --// FONDO DECORATIVO SEGÚN EL TEMA
     -- IMPORTANTE: vive DENTRO de ContentArea (no de todo Main). Antes cubría toda la
@@ -4017,7 +4142,7 @@ function YinYang:CreateWindow(title_text, startTheme)
             VerticalAlignment = Enum.VerticalAlignment.Top,
         }, TabPage)
 
-        local Tab = {Button = TabButton, Page = TabPage}
+        local Tab = {Button = TabButton, Page = TabPage, NameSpanish = nameSpanish, NameEnglish = nameEnglish, IconAsset = iconAsset}
 
         local function Select()
             for _, t in pairs(Window.Tabs) do
@@ -4034,6 +4159,7 @@ function YinYang:CreateWindow(title_text, startTheme)
             end)
             TabButton.TextColor3 = Theme.AccentText
             TabButton.BackgroundColor3 = Theme.Accent
+            if Window._RefreshCompactNavigation then Window._RefreshCompactNavigation() end
         end
 
         TabButton.MouseButton1Click:Connect(Select)
@@ -4072,8 +4198,10 @@ function YinYang:CreateWindow(title_text, startTheme)
             end
         end)
 
-        if #Window.Tabs == 0 then Select() end
         table.insert(Window.Tabs, Tab)
+        Tab.Select = Select
+        if Window._RegisterCompactTab then Window._RegisterCompactTab(Tab) end
+        if #Window.Tabs == 1 then Select() end
 
         --// NUEVO: TOGGLE FLOTANTE
 
@@ -6941,6 +7069,7 @@ function YinYang:CreateWindow(title_text, startTheme)
         end
 
         applyTextColorToAll(Theme.Text)
+        if self._RefreshCompactNavigation then self._RefreshCompactNavigation() end
 
         --// CANCELAR SLIDESHOW Y VIDEO ANTERIORES
         self._slideshowToken = (self._slideshowToken or 0) + 1
