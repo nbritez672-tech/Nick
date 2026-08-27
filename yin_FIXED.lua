@@ -3505,6 +3505,19 @@ function YinYang:CreateWindow(title_text, startTheme)
     }, Body)
     mk("UIPadding", {PaddingTop = UDim.new(0, 0), PaddingLeft = UDim.new(0, 0), PaddingRight = UDim.new(0, 0), PaddingBottom = UDim.new(0, 0)}, ContentArea)
 
+    --// Window debe existir antes de inicializar el rail compacto, porque este registra
+    --// sus métodos de refresco y las tabs creadas posteriormente los reutilizan.
+    local Window = setmetatable({}, ZeroUI)
+    Window.Tabs = {}
+    Window.Assets = Assets
+    Window.CurrentTheme = startTheme
+    Window.AllThemes = ThemePalettes
+    Window.FloatingToggles = {}
+    Window.Keybinds = {}
+    Window._keybindCapture = nil
+    Window.ScreenGui = ScreenGui
+    Window.BackgroundArt = nil
+
     --// NAVEGACIÓN COMPACTA: rail de iconos que reutiliza Tab.Select y registra tabs externas.
     --// No reemplaza TabList: la flecha alterna entre este rail y las pestañas normales.
     ;(function()
@@ -3647,6 +3660,7 @@ function YinYang:CreateWindow(title_text, startTheme)
         ZIndex = 5
     })
     corner(BackgroundArt, 8)
+    Window.BackgroundArt = BackgroundArt
 
     --// VideoFrame opcional: queda detrás del contenido y se muestra solo cuando
     --// el asset termina de cargar. Si no existe o falla, BackgroundArt permanece visible.
@@ -3727,17 +3741,6 @@ function YinYang:CreateWindow(title_text, startTheme)
             end
         end)
     end
-
-    local Window = setmetatable({}, ZeroUI)
-    Window.Tabs = {}
-    Window.Assets = Assets
-    Window.CurrentTheme = startTheme
-    Window.AllThemes = ThemePalettes
-    Window.FloatingToggles = {}
-    Window.Keybinds = {}
-    Window._keybindCapture = nil
-    Window.ScreenGui = ScreenGui
-    Window.BackgroundArt = BackgroundArt
 
     local function keyNameToDisplay(keyName)
         if type(keyName) ~= "string" or keyName == "" then
