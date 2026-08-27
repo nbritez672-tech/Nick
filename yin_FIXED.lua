@@ -9598,6 +9598,10 @@ do
         CharacterSpecularEnabled = false,
         CharacterApplied = {},
         ExcludeLocalAvatar = false,
+        SkyMirrorEnabled = false,
+        SkyMirrorStrength = 0.68,
+        SkyMirrorOriginal = {},
+        SkyMirrorApplied = {},
         ShadowEnabled = false,
         ShadowStrength = 0.30,
         ShadowRig = nil,
@@ -9637,6 +9641,35 @@ do
         return 0.72
     end
 
+    function ShaderReflections:_isSkyMirrorFloor(part, inModel)
+        return self.SkyMirrorEnabled
+            and not inModel
+            and math.abs(part.CFrame.UpVector.Y) >= 0.75
+            and part.Size.X >= 4
+            and part.Size.Z >= 4
+    end
+
+    function ShaderReflections:_applySkyMirrorSurface(part)
+        if not self.SkyMirrorEnabled or not part or not part.Parent then return end
+        if self.SkyMirrorOriginal[part] == nil then
+            local ok, topSurface = pcall(function() return part.TopSurface end)
+            self.SkyMirrorOriginal[part] = {TopSurface = ok and topSurface or nil}
+        end
+        pcall(function()
+            part.TopSurface = Enum.SurfaceType.Smooth
+        end)
+        self.SkyMirrorApplied[part] = true
+    end
+
+    function ShaderReflections:_restoreSkyMirror()
+        for part, original in pairs(self.SkyMirrorOriginal) do
+            if part and part.Parent and original and original.TopSurface ~= nil then
+                pcall(function() part.TopSurface = original.TopSurface end)
+            end
+        end
+        self.SkyMirrorOriginal, self.SkyMirrorApplied = {}, {}
+    end
+
     function ShaderReflections:_applyWetPart(part)
         if not part or not part.Parent or not part:IsA("BasePart") then return false end
         if part.Transparency >= 0.96 or part.Size.Magnitude < 1.2 then return false end
@@ -9658,8 +9691,12 @@ do
         if not ok then return false end
         if self.Original[part] == nil then self.Original[part] = current end
         if inModel then multiplier = multiplier * 0.92 end
+        local skyMirrorFloor = self:_isSkyMirrorFloor(part, inModel)
+        if skyMirrorFloor then self:_applySkyMirrorSurface(part) end
         local applied = pcall(function()
-            part.Reflectance = math.clamp(self.Original[part] + self.Intensity * self.Wetness * multiplier, 0, 0.90)
+            local wetReflectance = self.Original[part] + self.Intensity * self.Wetness * multiplier
+            if skyMirrorFloor then wetReflectance = math.max(wetReflectance, self.SkyMirrorStrength) end
+            part.Reflectance = math.clamp(wetReflectance, 0, 0.90)
         end)
         if applied then
             self.Applied[part] = true
@@ -9908,6 +9945,7 @@ do
             if part and part.Parent then pcall(function() part.Reflectance = original end) end
         end
         self.Original, self.Applied, self.ModelApplied, self.CharacterApplied = {}, {}, {}, {}
+        self:_restoreSkyMirror()
         self:_clearContact()
     end
 
@@ -9940,6 +9978,17 @@ do
         self.SceneCoverage = enabled == true
         if self.Enabled then
             self:Restore()
+            self.SceneQueue, self.SceneCursor, self.SceneComplete = {}, 1, false
+            self:Refresh()
+        end
+    end
+
+    function ShaderReflections:SetSkyMirrorEnabled(enabled)
+        self.SkyMirrorEnabled = enabled == true
+        if not self.SkyMirrorEnabled then
+            self:_restoreSkyMirror()
+        end
+        if self.Enabled then
             self.SceneQueue, self.SceneCursor, self.SceneComplete = {}, 1, false
             self:Refresh()
         end
@@ -10412,6 +10461,7 @@ do
                 wetness = ShaderReflections.Wetness,
                 surfaceMode = ShaderReflections.SurfaceMode,
                 sceneCoverage = ShaderReflections.SceneCoverage == true,
+                skyMirror = ShaderReflections.SkyMirrorEnabled == true,
                 contact = ShaderReflections.ContactEnabled == true,
                 contactStrength = ShaderReflections.ContactStrength,
                 modelDetail = ShaderReflections.ModelDetailEnabled == true,
@@ -11511,6 +11561,7 @@ do
             if type(overdrive.wetness) == "number" then ShaderReflections:SetWetness(overdrive.wetness) end
             if type(overdrive.surfaceMode) == "string" then ShaderReflections:SetSurfaceMode(overdrive.surfaceMode) end
             if type(overdrive.sceneCoverage) == "boolean" then ShaderReflections:SetSceneCoverage(overdrive.sceneCoverage) end
+            if type(overdrive.skyMirror) == "boolean" then ShaderReflections:SetSkyMirrorEnabled(overdrive.skyMirror) end
             if type(overdrive.contactStrength) == "number" then ShaderReflections:SetContactStrength(overdrive.contactStrength) end
             if type(overdrive.modelDetail) == "boolean" then ShaderReflections:SetModelDetailEnabled(overdrive.modelDetail) end
             if type(overdrive.characterSpecular) == "boolean" then ShaderReflections:SetCharacterSpecularEnabled(overdrive.characterSpecular) end
@@ -11635,6 +11686,10 @@ do
         ShaderReflections:SetEnabled(enabled)
         shaderQueuePersistence()
     end)
+    AutoTabShaders:CreateToggle("Espejo de cielo en suelo", "Sky mirror on floors", ShaderReflections.SkyMirrorEnabled, function(enabled)
+        ShaderReflections:SetSkyMirrorEnabled(enabled)
+        shaderQueuePersistence()
+    end)
     AutoTabShaders:CreateToggle("Sombras de modelos", "Model shadows", ShaderReflections.ShadowEnabled, function(enabled)
         ShaderReflections:SetShadowEnabled(enabled)
         shaderQueuePersistence()
@@ -11718,6 +11773,10 @@ do
         end,
         Read = function(targetId, properties)
             return ShaderManager:Read(targetId, properties)
+        end,
+        SetSkyMirrorEnabled = function(enabled)
+            ShaderReflections:SetSkyMirrorEnabled(enabled)
+            shaderQueuePersistence()
         end,
         OpenCustom = shaderOpenCustomWindow,
         CloseCustom = function()
