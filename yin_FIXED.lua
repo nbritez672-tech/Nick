@@ -9273,6 +9273,26 @@ do
             SunRaysEffect = {Enabled = true, Intensity = 0.10, Spread = 0.70},
             ColorGradingEffect = {Enabled = false, TonemapperPreset = Enum.TonemapperPreset.Default},
         },
+        GoldenSpecular = {
+            Lighting = {
+                ClockTime = 17.38, GeographicLatitude = 28, Brightness = 2.18,
+                Ambient = Color3.fromRGB(70, 60, 67), OutdoorAmbient = Color3.fromRGB(148, 112, 91),
+                ColorShift_Top = Color3.fromRGB(255, 181, 109), ColorShift_Bottom = Color3.fromRGB(70, 83, 126),
+                EnvironmentDiffuseScale = 0.72, EnvironmentSpecularScale = 0.96,
+                ExposureCompensation = 0.12, GlobalShadows = true, ShadowSoftness = 0.46,
+            },
+            Atmosphere = {
+                Density = 0.20, Offset = 0.04, Color = Color3.fromRGB(240, 175, 129),
+                Decay = Color3.fromRGB(97, 52, 69), Glare = 0.38, Haze = 0.84,
+            },
+            Clouds = {Cover = 0.20, Density = 0.16, Color = Color3.fromRGB(255, 204, 165)},
+            ColorCorrectionEffect = {Enabled = true, Brightness = 0.015, Contrast = 0.25, Saturation = 0.08, TintColor = Color3.fromRGB(255, 231, 207)},
+            BloomEffect = {Enabled = true, Intensity = 0.28, Size = 25, Threshold = 1.05},
+            BlurEffect = {Enabled = false, Size = 0},
+            DepthOfFieldEffect = {Enabled = true, FarIntensity = 0.13, FocusDistance = 74, InFocusRadius = 25, NearIntensity = 0.035},
+            SunRaysEffect = {Enabled = true, Intensity = 0.16, Spread = 0.78},
+            ColorGradingEffect = {Enabled = false, TonemapperPreset = Enum.TonemapperPreset.Default},
+        },
         VibrantGlow = {
             Lighting = {
                 ClockTime = 16.75, GeographicLatitude = 34, Brightness = 4.2,
@@ -9575,6 +9595,8 @@ do
         ContactElapsed = 0,
         ModelDetailEnabled = true,
         ModelApplied = {},
+        CharacterSpecularEnabled = false,
+        CharacterApplied = {},
         ShadowEnabled = false,
         ShadowStrength = 0.30,
         ShadowRig = nil,
@@ -9623,7 +9645,8 @@ do
             ancestor = ancestor.Parent
         end
         local ownerModel = part:FindFirstAncestorOfClass("Model")
-        if ownerModel == (LocalPlayer and LocalPlayer.Character) then return false end
+        local isLocalCharacter = ownerModel == (LocalPlayer and LocalPlayer.Character)
+        if isLocalCharacter and not self.CharacterSpecularEnabled then return false end
         local inModel = ownerModel ~= nil
         if inModel and not self.ModelDetailEnabled then return false end
         local floorOnly = self.SurfaceMode == "Floors"
@@ -9640,6 +9663,7 @@ do
         if applied then
             self.Applied[part] = true
             if inModel then self.ModelApplied[part] = true end
+            if isLocalCharacter then self.CharacterApplied[part] = true end
         end
         return applied
     end
@@ -9853,6 +9877,16 @@ do
                 count = count + 1
             end
         end
+        if self.CharacterSpecularEnabled and character then
+            local characterCount = 0
+            for _, part in ipairs(character:GetDescendants()) do
+                if characterCount >= 28 then break end
+                if part:IsA("BasePart") and self:_applyWetPart(part) then
+                    active[part] = true
+                    characterCount = characterCount + 1
+                end
+            end
+        end
         if not self.SceneCoverage then
             for part in pairs(self.Applied) do
                 if not active[part] then
@@ -9872,7 +9906,7 @@ do
         for part, original in pairs(self.Original) do
             if part and part.Parent then pcall(function() part.Reflectance = original end) end
         end
-        self.Original, self.Applied, self.ModelApplied = {}, {}, {}
+        self.Original, self.Applied, self.ModelApplied, self.CharacterApplied = {}, {}, {}, {}
         self:_clearContact()
     end
 
@@ -9935,6 +9969,21 @@ do
             self.SceneQueue, self.SceneCursor, self.SceneComplete = {}, 1, false
             self:Refresh()
         end
+    end
+
+    function ShaderReflections:SetCharacterSpecularEnabled(enabled)
+        self.CharacterSpecularEnabled = enabled == true
+        if not self.CharacterSpecularEnabled then
+            for part in pairs(self.CharacterApplied) do
+                local original = self.Original[part]
+                if part and part.Parent and original ~= nil then pcall(function() part.Reflectance = original end) end
+                self.Original[part] = nil
+                self.Applied[part] = nil
+                self.ModelApplied[part] = nil
+            end
+            self.CharacterApplied = {}
+        end
+        if self.Enabled then self:Refresh() end
     end
 
     function ShaderReflections:SetShadowEnabled(enabled)
@@ -10002,6 +10051,20 @@ do
                 self:Refresh()
             end
         end)
+    end
+
+    function ShaderReflections:ApplyGoldenFinish()
+        self:SetSceneCoverage(false)
+        self:SetSurfaceMode("All")
+        self:SetModelDetailEnabled(true)
+        self:SetCharacterSpecularEnabled(true)
+        self:SetIntensity(0.46)
+        self:SetWetness(0.96)
+        self:SetContactStrength(0.38)
+        self:SetContactEnabled(true)
+        self:SetShadowStrength(0.46)
+        self:SetShadowEnabled(true)
+        self:SetEnabled(true)
     end
 
     local ShaderSolarTone = {
@@ -10334,6 +10397,7 @@ do
                 contact = ShaderReflections.ContactEnabled == true,
                 contactStrength = ShaderReflections.ContactStrength,
                 modelDetail = ShaderReflections.ModelDetailEnabled == true,
+                characterSpecular = ShaderReflections.CharacterSpecularEnabled == true,
                 modelShadows = ShaderReflections.ShadowEnabled == true,
                 shadowStrength = ShaderReflections.ShadowStrength,
                 sunHue = ShaderSolarTone.Hue,
@@ -10376,14 +10440,20 @@ do
 
     local function shaderSyncImmersivePreset(name)
         if name == "Rain" or name == "Stormfront" then
+            ShaderReflections:SetCharacterSpecularEnabled(false)
             ShaderReflections:SetIntensity(name == "Stormfront" and 0.36 or 0.28)
             ShaderReflections:SetEnabled(true)
             ShaderReflections:SetContactEnabled(true)
             ShaderRain:SetIntensity(name == "Stormfront" and 0.95 or 0.72)
             ShaderRain:SetEnabled(true)
             ShaderRain:SetStormEnabled(name == "Stormfront")
+        elseif name == "GoldenSpecular" then
+            ShaderRain:Destroy()
+            shaderSetQuality("Cinematic")
+            ShaderReflections:ApplyGoldenFinish()
         else
             ShaderRain:Destroy()
+            ShaderReflections:SetCharacterSpecularEnabled(false)
             ShaderReflections:SetContactEnabled(false)
             ShaderReflections:SetEnabled(false)
         end
@@ -11423,6 +11493,7 @@ do
             if type(overdrive.sceneCoverage) == "boolean" then ShaderReflections:SetSceneCoverage(overdrive.sceneCoverage) end
             if type(overdrive.contactStrength) == "number" then ShaderReflections:SetContactStrength(overdrive.contactStrength) end
             if type(overdrive.modelDetail) == "boolean" then ShaderReflections:SetModelDetailEnabled(overdrive.modelDetail) end
+            if type(overdrive.characterSpecular) == "boolean" then ShaderReflections:SetCharacterSpecularEnabled(overdrive.characterSpecular) end
             if type(overdrive.modelShadows) == "boolean" then ShaderReflections:SetShadowEnabled(overdrive.modelShadows) end
             if type(overdrive.shadowStrength) == "number" then ShaderReflections:SetShadowStrength(overdrive.shadowStrength) end
             if type(overdrive.sunHue) == "number" then ShaderSolarTone.Hue = math.clamp(overdrive.sunHue, 0, 1) end
@@ -11495,6 +11566,7 @@ do
         {"Lluvia", "Rain", "Rain", "Niebla fría y cielo cubierto"},
         {"Tormenta", "Stormfront", "Stormfront", "Lluvia local, reflejos húmedos y relámpagos dinámicos", "Local rain, wet reflections and dynamic lightning"},
         {"Cinemático", "Cinematic", "Cinematic", "Profundidad de campo y look de película"},
+        {"Sol Especular", "Golden Specular", "GoldenSpecular", "Hora dorada, reflejos cálidos en superficies y modelos", "Golden hour, warm highlights on surfaces and models"},
         {"Glow Vibrante", "Vibrant Glow", "VibrantGlow", "Pasteles saturados · bloom intenso y atmósfera etérea", "Saturated pastels · intense bloom and ethereal atmosphere"},
         {"Retro", "Retro", "Retro", "Gradación clásica y color vintage"},
     }
@@ -11548,6 +11620,10 @@ do
     end)
     AutoTabShaders:CreateToggle("Contacto del personaje", "Character contact", ShaderReflections.ContactEnabled, function(enabled)
         ShaderReflections:SetContactEnabled(enabled)
+        shaderQueuePersistence()
+    end)
+    AutoTabShaders:CreateToggle("Brillo solar del personaje", "Character solar sheen", ShaderReflections.CharacterSpecularEnabled, function(enabled)
+        ShaderReflections:SetCharacterSpecularEnabled(enabled)
         shaderQueuePersistence()
     end)
     AutoTabShaders:CreateToggle("Lluvia física", "Physical rain", ShaderRain.Enabled, function(enabled)
