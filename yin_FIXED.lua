@@ -9597,6 +9597,7 @@ do
         ModelApplied = {},
         CharacterSpecularEnabled = false,
         CharacterApplied = {},
+        ExcludeLocalAvatar = false,
         ShadowEnabled = false,
         ShadowStrength = 0.30,
         ShadowRig = nil,
@@ -9646,7 +9647,7 @@ do
         end
         local ownerModel = part:FindFirstAncestorOfClass("Model")
         local isLocalCharacter = ownerModel == (LocalPlayer and LocalPlayer.Character)
-        if isLocalCharacter and not self.CharacterSpecularEnabled then return false end
+        if isLocalCharacter and (self.ExcludeLocalAvatar or not self.CharacterSpecularEnabled) then return false end
         local inModel = ownerModel ~= nil
         if inModel and not self.ModelDetailEnabled then return false end
         local floorOnly = self.SurfaceMode == "Floors"
@@ -9773,7 +9774,7 @@ do
     end
 
     function ShaderReflections:_refreshContact()
-        if not self.ContactEnabled or not self.Enabled then
+        if self.ExcludeLocalAvatar or not self.ContactEnabled or not self.Enabled then
             self:_clearContact()
             return
         end
@@ -9983,6 +9984,22 @@ do
             end
             self.CharacterApplied = {}
         end
+        if self.Enabled then self:Refresh() end
+    end
+
+    function ShaderReflections:SetExcludeLocalAvatar(enabled)
+        self.ExcludeLocalAvatar = enabled == true
+        if self.ExcludeLocalAvatar then
+            for part in pairs(self.CharacterApplied) do
+                local original = self.Original[part]
+                if part and part.Parent and original ~= nil then pcall(function() part.Reflectance = original end) end
+                self.Original[part] = nil
+                self.Applied[part] = nil
+                self.ModelApplied[part] = nil
+            end
+            self.CharacterApplied = {}
+        end
+        self:_refreshContact()
         if self.Enabled then self:Refresh() end
     end
 
@@ -10387,6 +10404,7 @@ do
             demoEnabled = ShaderDemoEnabled == true,
             preset = ShaderDemoPreset,
             custom = shaderSerializableOverrides(),
+            customMode = next(ShaderCustomOverrides) ~= nil,
             quality = ShaderSceneQuality,
             overdrive = {
                 wetReflections = ShaderReflections.Enabled == true,
@@ -10398,6 +10416,7 @@ do
                 contactStrength = ShaderReflections.ContactStrength,
                 modelDetail = ShaderReflections.ModelDetailEnabled == true,
                 characterSpecular = ShaderReflections.CharacterSpecularEnabled == true,
+                excludeLocalAvatar = ShaderReflections.ExcludeLocalAvatar == true,
                 modelShadows = ShaderReflections.ShadowEnabled == true,
                 shadowStrength = ShaderReflections.ShadowStrength,
                 sunHue = ShaderSolarTone.Hue,
@@ -11470,7 +11489,8 @@ do
     shaderWarn(initialDemoReport, "Demo inicial")
 
     if ShaderSavedState then
-        if type(ShaderSavedState.custom) == "table" then
+        local restoreCustomOverrides = ShaderSavedState.customMode == true
+        if restoreCustomOverrides and type(ShaderSavedState.custom) == "table" then
             ShaderCustomOverrides = ShaderSavedState.custom
             for _, spec in ipairs(shaderCustomSpecs()) do
                 if spec.id then
@@ -11494,6 +11514,7 @@ do
             if type(overdrive.contactStrength) == "number" then ShaderReflections:SetContactStrength(overdrive.contactStrength) end
             if type(overdrive.modelDetail) == "boolean" then ShaderReflections:SetModelDetailEnabled(overdrive.modelDetail) end
             if type(overdrive.characterSpecular) == "boolean" then ShaderReflections:SetCharacterSpecularEnabled(overdrive.characterSpecular) end
+            if type(overdrive.excludeLocalAvatar) == "boolean" then ShaderReflections:SetExcludeLocalAvatar(overdrive.excludeLocalAvatar) end
             if type(overdrive.modelShadows) == "boolean" then ShaderReflections:SetShadowEnabled(overdrive.modelShadows) end
             if type(overdrive.shadowStrength) == "number" then ShaderReflections:SetShadowStrength(overdrive.shadowStrength) end
             if type(overdrive.sunHue) == "number" then ShaderSolarTone.Hue = math.clamp(overdrive.sunHue, 0, 1) end
@@ -11624,6 +11645,10 @@ do
     end)
     AutoTabShaders:CreateToggle("Brillo solar del personaje", "Character solar sheen", ShaderReflections.CharacterSpecularEnabled, function(enabled)
         ShaderReflections:SetCharacterSpecularEnabled(enabled)
+        shaderQueuePersistence()
+    end)
+    AutoTabShaders:CreateToggle("Excluir mi avatar", "Exclude my avatar", ShaderReflections.ExcludeLocalAvatar, function(enabled)
+        ShaderReflections:SetExcludeLocalAvatar(enabled)
         shaderQueuePersistence()
     end)
     AutoTabShaders:CreateToggle("Lluvia física", "Physical rain", ShaderRain.Enabled, function(enabled)
