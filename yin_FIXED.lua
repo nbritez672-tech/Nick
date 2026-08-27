@@ -8179,7 +8179,8 @@ function YinYang:CreateWindow(title_text, startTheme)
     local function updateSVAt(position)
         local size = PickerArea.AbsoluteSize
         if size.X <= 0 or size.Y <= 0 then return end
-        local localPosition = position - PickerArea.AbsolutePosition
+        local pointer = Vector2.new(position.X, position.Y)
+        local localPosition = pointer - PickerArea.AbsolutePosition
         pickerSaturation = math.clamp(localPosition.X / size.X, 0, 1)
         pickerValue = math.clamp(1 - localPosition.Y / size.Y, 0, 1)
         refreshPicker()
@@ -8187,7 +8188,8 @@ function YinYang:CreateWindow(title_text, startTheme)
     local function updateHueAt(position)
         local size = HueBar.AbsoluteSize
         if size.Y <= 0 then return end
-        pickerHue = math.clamp((position.Y - HueBar.AbsolutePosition.Y) / size.Y, 0, 1)
+        local pointer = Vector2.new(position.X, position.Y)
+        pickerHue = math.clamp((pointer.Y - HueBar.AbsolutePosition.Y) / size.Y, 0, 1)
         refreshPicker()
     end
     local function closeColorPicker()
